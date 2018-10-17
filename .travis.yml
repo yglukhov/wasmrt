@@ -8,6 +8,6 @@ services:
 before_install:
   - docker pull $DOCKER_IMG
 script:
-  - docker run -e WASM_LLVM_BIN -v "$(pwd):/project" -w /project $DOCKER_IMG nim --version
-  - docker run -v "$(pwd):/project" -w /project $DOCKER_IMG nimble test
+  - docker run -v "$(pwd):/project" -w /project $DOCKER_IMG nim --version
+  - docker run -e WASM_LLVM_BIN -v "$(pwd):/project" -w /project $DOCKER_IMG nimble test
 
