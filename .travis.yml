@@ -1,7 +1,8 @@
 sudo: required
 env:
-  - WASM_LLVM_BIN=/usr/bin
-  - DOCKER_IMG=yglukhov/debian-stretch.base.wasm.nim
+  global:
+    - WASM_LLVM_BIN=/usr/bin
+    - DOCKER_IMG=yglukhov/debian-stretch.base.wasm.nim
 services:
   - docker
 before_install:
