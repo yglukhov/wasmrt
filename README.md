@@ -1,6 +1,6 @@
 # wasmrt [![Build Status](https://travis-ci.org/yglukhov/nimwasmrt.svg?branch=master)](https://travis-ci.org/yglukhov/nimwasmrt)
 
-Disclaimer. This is a proof of concept, so use it carefully.
+Disclaimer. This is a proof of concept, use with caution.
 
 Compile nim to wasm
 ```nim
