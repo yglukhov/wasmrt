@@ -42,3 +42,6 @@ function runNimWasm(w){for(i of WebAssembly.Module.exports(w)){n=i.name;if(n[0]=
 # Caveats
 - Exceptions don't work.
 - Nim GC is disabled on start, you have to run it carefully close to the stack bottom, otherwise it can collect live references.
+
+# Why no Emscripten?
+The goal of this project is to produce self-contained standalone wasm files from nim code, without any JS glue, or "desktop platform emulation".
