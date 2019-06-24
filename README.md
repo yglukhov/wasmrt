@@ -15,20 +15,7 @@ node tests/runwasm.js test.wasm
 ```
 
 # Prerequisites
-- clang with WebAssembly support. You can build it yourself:
-```
-tag=release_70
-INSTALL_PREFIX=$(pwd)/llvm-wasm
-git clone --depth 1 --branch $tag https://github.com/llvm-mirror/llvm.git
-cd llvm/tools
-git clone --depth 1 --branch $tag https://github.com/llvm-mirror/clang
-git clone --depth 1 --branch $tag https://github.com/llvm-mirror/lld
-cd ..
-mkdir build
-cd build
-cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX -DLLVM_TARGETS_TO_BUILD= -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=WebAssembly ..
-make -j 4 install
-```
+- clang 8.0 or later
 - Special Nim config, like [this one](https://github.com/yglukhov/nimwasmrt/blob/master/tests/test.nims)
 - [Optional] [wasm-gc](https://github.com/alexcrichton/wasm-gc) - a tool to compact your wasm file
 
