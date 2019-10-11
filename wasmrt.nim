@@ -147,7 +147,7 @@ proc consoleFlush() {.importwasm: "console.log(_nimc.join('')); _nimc = []".}
 proc fwrite(p: pointer, sz, nmemb: csize, stream: pointer): csize {.wasmexport.} =
   if cast[int](stream) == 0:
     # stdout
-    let fzs = sz * nmemb
+    let fzs = int(sz * nmemb)
     if isNodejsAux():
       nodejsWriteStdout(p, fzs)
     else:
@@ -195,7 +195,7 @@ proc jsMemIncreased() {.importwasm: "_nimmu()".}
 
 var memStart, totalMemory: uint
 
-proc wasmAlloc(block_size: int): pointer {.inline.} =
+proc wasmAlloc(block_size: uint): pointer {.inline.} =
   if totalMemory == 0:
     totalMemory = cast[uint](wasmMemorySize(0)) * wasmPageSize
     memStart = totalMemory
@@ -203,15 +203,16 @@ proc wasmAlloc(block_size: int): pointer {.inline.} =
   result = cast[pointer](memStart)
 
   let availableMemory = totalMemory - memStart
-  inc(memStart, block_size)
+  memStart += block_size
+  # inc(memStart, block_size)
 
-  if availableMemory < cast[uint](block_size):
+  if availableMemory < block_size:
     let wasmPagesToAllocate = block_size div wasmPageSize + 1
     let oldPages = wasmMemoryGrow(int32(wasmPagesToAllocate))
     if oldPages < 0:
       return nil
 
-    inc(totalMemory, wasmPagesToAllocate * wasmPageSize)
+    totalMemory += wasmPagesToAllocate * wasmPageSize
     jsMemIncreased()
 
 proc mmap(a: pointer, len: csize, prot, flags, fildes: cint, off: int): pointer {.wasmexport, dynlib.} =
