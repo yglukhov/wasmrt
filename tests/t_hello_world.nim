@@ -1,7 +1,7 @@
 import ../wasmrt
 
 
-proc consoleLog(a: cstring) {.importwasm: "console.log(_nimsj($0))".}
+proc consoleLog(a: cstring) {.importwasm: "console.log(_nimsj(a))".}
 var s = "Hello World"
 consoleLog(s & "!!!11")
 var a = 5

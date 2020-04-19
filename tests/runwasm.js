@@ -1,5 +1,4 @@
 process.on('unhandledRejection', error => {
-  // Will print "unhandledRejection err is not defined"
   console.log('Unhandled promise rejection', error);
   process.exit(1)
 });

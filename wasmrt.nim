@@ -1,4 +1,5 @@
 import macros
+import wasmrt/minify
 
 macro exportwasm*(p: untyped): untyped =
     expectKind(p, nnkProcDef)
@@ -9,56 +10,41 @@ macro exportwasm*(p: untyped): untyped =
     else:
         result.addPragma(newColonExpr(newIdentNode("codegenDecl"), newLit("__attribute__ ((visibility (\"default\"))) $# $#$#")))
 
-proc escape(s: string, escapeDollar = true): string {.compileTime.} =
-    result = ""
-    var needsBreak = false
+proc stripSinkFromArgType(t: NimNode): NimNode =
+  result = t
+  if result.kind == nnkBracketExpr and result.len == 2 and result[0].kind == nnkSym and $result[0] == "sink":
+    result = result[1]
 
-    const alpha = {'A' .. 'Z', 'a' .. 'z'}
-    const digits = {'0' .. '9'}
-    var lastChar = '\0'
-    for c in s:
-        if c in {' ', '\n', '\t'}:
-            needsBreak = true
-        else:
-            if c == '$' and escapeDollar:
-                result.add("$$")
-            elif c in alpha or c in digits:
-                if needsBreak and lastChar in alpha:
-                    result.add(' ')
-                result.add(c)
-            else:
-                result.addEscapedChar(c)
-            needsBreak = false
-            lastChar = c
-
-proc quote(s: string): string {.compileTime.} =
-    result = "\"" & escape(s, false) & "\""
+iterator arguments(formalParams: NimNode): tuple[idx: int, name, typ, default: NimNode] =
+  formalParams.expectKind(nnkFormalParams)
+  var iParam = 0
+  for i in 1 ..< formalParams.len:
+    let pp = formalParams[i]
+    for j in 0 .. pp.len - 3:
+      yield (iParam, pp[j], copyNimTree(stripSinkFromArgType(pp[^2])), pp[^1])
+      inc iParam
 
 macro importwasm*(body: string, p: untyped): untyped =
     expectKind(p, nnkProcDef)
     result = p
 
-    var argCount = 0
-    for a in 1 ..< p.params.len:
-        argCount += p.params[a].len - 2
+    var argString = ""
+    for a in arguments(p.params):
+        if a.idx != 0: argString &= ","
+        argString &= $a.name
 
     result.addPragma(newIdentNode("importc"))
-    result.addPragma(newColonExpr(newIdentNode("codegenDecl"), newLit("$# $#$# __asm__(\"" & $argCount & ";" & escape(body.strVal) & "\")")))
+    result.addPragma(newColonExpr(newIdentNode("codegenDecl"), newLit("$# $#$# __asm__(\"" & escapeJs("\"" & argString & "\";" & body.strVal.minifyJs, "$$") & "\")")))
 
 const initCode = """;
 var W = WebAssembly, f = W.Module.imports(m), o = {}, g = typeof window == 'undefined' ? global : window, q, b;
 for (i in f) {
-    var a = '', n = f[i].name, c = parseInt(n);
-    if (isNaN(c))
+    var a = '', n = f[i].name;
+    if (n[0] == '"')
+        o[n] = new Function(n.substring(1, n.indexOf('"', 1)), n);
+    else
         console.warn("Undefined external symbol: ", n),
         o[n] = new Function('', 'throw new Error("Undefined symbol called:  ' + n + '")');
-    else {
-        for (j = 0; j < c; ++j) {
-            if (j) a += ',';
-            a += '$' + j
-        }
-        o[n] = new Function(a, n)
-    }
 }
 
 g._nimc = [];
@@ -83,7 +69,7 @@ W.instantiate(m, {env: o}).then(m => {
     _nimmu();
     m.exports['-']()
 })
-""".quote()
+""".minifyJs().escapeJs()
 
 {.emit: """
 #define NIM_WASM_EXPORT N_LIB_EXPORT __attribute__((visibility ("default")))
@@ -97,7 +83,7 @@ void nimWasmMain() {
     NimMain();
 }
 
-NIM_WASM_EXPORT const char __nimWasmInit __asm__(""" & initCode & """) = 0;
+NIM_WASM_EXPORT const char __nimWasmInit __asm__(""" & '"' & initCode & """") = 0;
 
 N_LIB_EXPORT void* memcpy(void* a, void* b, size_t s) {
     char* aa = (char*)a;
@@ -121,18 +107,22 @@ N_LIB_EXPORT void* memset(void* a, int b, size_t s) {
     return a;
 }
 
+N_LIB_EXPORT size_t strlen(const char* a) {
+    const char* b = a;
+    while (*b++);
+    return b - a - 1;
+}
+
 """.}
 
 proc isNodejsAux(): bool {.importwasm:"return typeof process != 'undefined'".}
 
-proc nodejsWriteToStream(stream: int, b: pointer, l: int) {.importwasm:"($1?process.stderr:process.stdout).write(_nims($1, $2))".}
+proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasm:"(s?process.stderr:process.stdout).write(_nims(b, l))".}
 
-proc consoleWarn(a: cstring) {.importwasm: "console.warn(_nimsj($0))".}
+proc consoleWarn(a: cstring) {.importwasm: "console.warn(_nimsj(a))".}
 
-# proc jsLog(s: cstring, i: int) {.importwasm: "console.log(_nimsj($0), $1)".}
-
-proc consoleAppend(b: pointer, l: int) {.importwasm: "_nimc.push(_nims($0, $1))".}
-proc consoleFlush(stream: int) {.importwasm: "($0?console.error:console.log)(_nimc.join('')); _nimc = []".}
+proc consoleAppend(b: pointer, l: int) {.importwasm: "_nimc.push(_nims(b, l))".}
+proc consoleFlush(s: int) {.importwasm: "(s?console.error:console.log)(_nimc.join('')); _nimc = []".}
 
 proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.} =
   if cast[int](stream) in {0, 1}:
