@@ -88,6 +88,9 @@ W.instantiate(m, {env: o}).then(m => {
 {.emit: """
 #define NIM_WASM_EXPORT N_LIB_EXPORT __attribute__((visibility ("default")))
 
+int stdout = 0;
+int stderr = 1;
+
 NIM_WASM_EXPORT void nimWasmMain() __asm__("-");
 void nimWasmMain() {
     void NimMain();
@@ -118,63 +121,49 @@ N_LIB_EXPORT void* memset(void* a, int b, size_t s) {
     return a;
 }
 
-#ifdef __cplusplus
-
-namespace std {
-  typedef void (*terminate_handler)();
-  terminate_handler set_terminate(terminate_handler h) noexcept {
-    return NULL;
-  }
-}
-
-#endif
-
 """.}
-
-{.pragma: wasmexport, exportc, dynlib.}
 
 proc isNodejsAux(): bool {.importwasm:"return typeof process != 'undefined'".}
 
-proc nodejsWriteStdout(b: pointer, l: int) {.importwasm:"process.stdout.write(_nims($0, $1))".}
+proc nodejsWriteToStream(stream: int, b: pointer, l: int) {.importwasm:"($1?process.stderr:process.stdout).write(_nims($1, $2))".}
 
 proc consoleWarn(a: cstring) {.importwasm: "console.warn(_nimsj($0))".}
 
-proc jsLog(s: cstring, i: int) {.importwasm: "console.log(_nimsj($0), $1)".}
+# proc jsLog(s: cstring, i: int) {.importwasm: "console.log(_nimsj($0), $1)".}
 
 proc consoleAppend(b: pointer, l: int) {.importwasm: "_nimc.push(_nims($0, $1))".}
-proc consoleFlush() {.importwasm: "console.log(_nimc.join('')); _nimc = []".}
+proc consoleFlush(stream: int) {.importwasm: "($0?console.error:console.log)(_nimc.join('')); _nimc = []".}
 
-proc fwrite(p: pointer, sz, nmemb: csize, stream: pointer): csize {.wasmexport.} =
-  if cast[int](stream) == 0:
+proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.} =
+  if cast[int](stream) in {0, 1}:
     # stdout
     let fzs = int(sz * nmemb)
     if isNodejsAux():
-      nodejsWriteStdout(p, fzs)
+      nodejsWriteToStream(cast[int](stream), p, fzs)
     else:
       consoleAppend(p, fzs)
-
   else:
     consoleWarn("Attempted to write to wrong stream")
 
-proc flockfile(f: pointer) {.wasmexport.} = discard
-proc funlockfile(f: pointer) {.wasmexport.} = discard
+proc flockfile(f: pointer) {.exportc.} = discard
+proc funlockfile(f: pointer) {.exportc.} = discard
 
-proc exit(code: cint) {.wasmexport.} =
+proc exit(code: cint) {.exportc.} =
   consoleWarn "exit called, ignoring"
 
-proc fflush(stream: pointer): cint {.wasmexport.} =
-  if cast[int](stream) == 0 and not isNodejsAux():
-    consoleFlush()
+proc fflush(stream: pointer): cint {.exportc.} =
+  if cast[int](stream) in {0, 1} and not isNodejsAux():
+    consoleFlush(cast[int](stream))
 
-proc fputc(c: cint, stream: pointer): cint {.wasmexport.} =
+proc fputc(c: cint, stream: pointer): cint {.exportc.} =
   if cast[int](stream) == 0:
     var buf = cast[uint8](c)
     if isNodejsAux():
-      nodejsWriteStdout(addr buf, 1)
+      nodejsWriteToStream(cast[int](stream), addr buf, 1)
   else:
     consoleWarn "fputc called, ignoring"
 
-proc munmap(a: pointer, len: csize): cint {.wasmexport.} =
+proc munmap(a: pointer, len: csize_t): cint {.exportc.} =
   consoleWarn "munmap called, ignoring"
 
 
@@ -215,75 +204,10 @@ proc wasmAlloc(block_size: uint): pointer {.inline.} =
     totalMemory += wasmPagesToAllocate * wasmPageSize
     jsMemIncreased()
 
-proc mmap(a: pointer, len: csize, prot, flags, fildes: cint, off: int): pointer {.wasmexport, dynlib.} =
+proc mmap(a: pointer, len: csize_t, prot, flags, fildes: cint, off: int): pointer {.exportc.} =
   if a != nil:
     consoleWarn("mmap called with wrong arguments")
   wasmAlloc(len)
 
-GC_disable()
-
-when false:
-  var emasmId {.compileTime.}: int
-
-  proc emasmImpl(code, typ: string, args: NimNode): NimNode =
-    result = newNimNode(nnkStmtList)
-    let prc = newProc()
-    prc.addPragma(newColonExpr(newIdentNode("importwasm"), newLit(code)))
-    let s = genSym(nskProc, "emasm" & $emasmId)
-    inc emasmId
-    prc.name = s
-    prc.params[0] = newIdentNode(typ)
-    for i, a in args:
-      prc.params.add(newIdentDefs(newIdentNode("arg" & $i), newCall("type", copyNimTree(a))))
-
-    let c = newCall(s)
-    for a in args: c.add(a)
-    result.add(prc)
-    result.add(c)
-
-  macro EM_ASM_INT(code: static[string], args: varargs[untyped]): cint =
-    result = emasmImpl(code, "cint", args)
-
-  macro EM_ASM_DOUBLE(code: static[string], args: varargs[untyped]): cdouble =
-    result = emasmImpl(code, "cdouble", args)
-
-  discard EM_ASM_INT("console.log('hello', $0)", 123)
-  echo "emasm returned: ", EM_ASM_INT("console.log('hello again', $0); return 156", 123)
-  echo "emasm returned: ", int(EM_ASM_DOUBLE("console.log('hello again double', $0); return 1.56", 123))
-
-
-  var myGlobal: int
-  {.emit: """/*INCLUDESECTION*/
-
-  int __cpp_exception = 0;
-  """.}
-
-  proc foo(a: int) =
-    echo "foo"
-    # try:
-    echo "hi"
-    var b: int
-  #   {.emit: """
-  #   try {
-  #     if (`a` == 1) {
-  #       __builtin_wasm_throw(__cpp_exception, &`myGlobal`);
-  #     }
-  #   }
-  #   catch(...) {
-  #     `b` = 5;
-  #   }
-  # """.}
-    echo b
-    # wasmThrow(0, addr myGlobal)
-    # except:
-    #   echo "except"
-    # let e = wasmGetException(0)
-    # try:
-    #   echo "trying"
-    #   raise newException(Exception, "hi")
-    # except:
-    #   echo "except"
-
-  foo(1)
-  foo(2)
-
+when not defined(gcDestructors):
+  GC_disable()
