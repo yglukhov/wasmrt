@@ -7,8 +7,6 @@ license       = "MIT"
 
 # Dependencies
 
-requires "nim >= 1.2"
-
 import os, oswalkdir
 
 proc buildExample(name: string, shouldFail = false) =
