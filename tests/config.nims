@@ -1,7 +1,7 @@
 --os:linux
 --cpu:i386
 --cc:clang
---gc:arc
+--gc:orc
 --d:release
 --nomain
 --opt:size

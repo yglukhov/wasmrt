@@ -1,4 +1,4 @@
-# wasmrt [![Build Status](https://travis-ci.org/yglukhov/nimwasmrt.svg?branch=master)](https://travis-ci.org/yglukhov/nimwasmrt)
+# wasmrt [![Build Status](https://travis-ci.org/yglukhov/wasmrt.svg?branch=master)](https://travis-ci.org/yglukhov/nimwasmrt)
 
 Disclaimer. This is a proof of concept, use with caution.
 
@@ -16,7 +16,7 @@ node tests/runwasm.js test.wasm
 
 # Prerequisites
 - clang 8.0 or later
-- Special Nim config, like [this one](https://github.com/yglukhov/nimwasmrt/blob/master/tests/test.nims)
+- Special Nim config, like [this one](https://github.com/yglukhov/wasmrt/blob/master/tests/test.nims)
 - [Optional] [wasm-gc](https://github.com/alexcrichton/wasm-gc) - a tool to compact your wasm file
 
 # Run your wasm
@@ -24,7 +24,7 @@ The wasm file generated this way is pretty standalone, and requires only the fol
 ```js
 function runNimWasm(w){for(i of WebAssembly.Module.exports(w)){n=i.name;if(n[0]==';'){new Function('m',n)(w);break}}}
 ```
-`runNimWasm` takes the output of `WebAssembly.compile` function. E.g. to run a wasm file in nodejs, use smth like [runwasm.js](https://github.com/yglukhov/nimwasmrt/blob/master/tests/runwasm.js)
+`runNimWasm` takes the output of `WebAssembly.compile` function. E.g. to run a wasm file in nodejs, use smth like [runwasm.js](https://github.com/yglukhov/wasmrt/blob/master/tests/runwasm.js)
 
 # Caveats
 - Exceptions don't work.

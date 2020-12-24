@@ -76,6 +76,7 @@ W.instantiate(m, {env: o}).then(m => {
 
 int stdout = 0;
 int stderr = 1;
+static int dummyErrno = 0;
 
 NIM_WASM_EXPORT void nimWasmMain() __asm__("-");
 void nimWasmMain() {
@@ -113,6 +114,34 @@ N_LIB_EXPORT size_t strlen(const char* a) {
     return b - a - 1;
 }
 
+N_LIB_EXPORT char* strerror(int errnum) {
+    return "strerror is not supported";
+}
+
+N_LIB_EXPORT int* __errno_location() {
+    return &dummyErrno;
+}
+
+N_LIB_EXPORT char* strstr(char *haystack, const char *needle) {
+    if (haystack == NULL || needle == NULL) {
+        return NULL;
+    }
+
+    for ( ; *haystack; haystack++) {
+        // Is the needle at this point in the haystack?
+        const char *h, *n;
+        for (h = haystack, n = needle; *h && *n && (*h == *n); ++h, ++n) {
+            // Match is progressing
+        }
+        if (*n == '\0') {
+            // Found match!
+            return haystack;
+        }
+        // Didn't match here.  Try again further along haystack.
+    }
+    return NULL;
+}
+
 """.}
 
 proc isNodejsAux(): bool {.importwasm:"return typeof process != 'undefined'".}
@@ -137,6 +166,7 @@ proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.
 
 proc flockfile(f: pointer) {.exportc.} = discard
 proc funlockfile(f: pointer) {.exportc.} = discard
+proc ferror(f: pointer): cint {.exportc.} = discard
 
 proc exit(code: cint) {.exportc.} =
   consoleWarn "exit called, ignoring"
@@ -167,8 +197,8 @@ proc wasmMemoryGrow(b: int32): int32 {.inline.} =
     proc int_wasm_memory_grow(b: int32) {.importc: "__builtin_wasm_grow_memory", nodecl.}
     int_wasm_memory_grow(b)
 
-proc wasmThrow(b: int32, p: pointer) {.importc: "__builtin_wasm_throw", nodecl.}
-proc wasmGetException(b: int32): pointer {.importc: "__builtin_wasm_catch", nodecl.}
+# proc wasmThrow(b: int32, p: pointer) {.importc: "__builtin_wasm_throw", nodecl.}
+# proc wasmGetException(b: int32): pointer {.importc: "__builtin_wasm_catch", nodecl.}
 
 proc jsMemIncreased() {.importwasm: "_nimmu()".}
 

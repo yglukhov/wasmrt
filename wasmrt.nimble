@@ -19,6 +19,7 @@ proc buildExample(name: string, shouldFail = false) =
     try:
       exec "node ./tests/runwasm.js " & name & ".wasm"
     except:
+      echo "Test failed as it should"
       failed = true
     assert(failed, "Test " & name & " should fail but did not")
   else:
