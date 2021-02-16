@@ -65,9 +65,10 @@ g._nims = (a, l) => {
 
 W.instantiate(m, {env: o}).then(m => {
     g._nimm = m;
-    q = m.exports.memory;
+    g._nime = m.exports;
+    q = _nime.memory;
     _nimmu();
-    m.exports['-']()
+    _nime.NimMain()
 })
 """.minifyJs().escapeJs()
 
@@ -78,15 +79,9 @@ int stdout = 0;
 int stderr = 1;
 static int dummyErrno = 0;
 
-NIM_WASM_EXPORT void nimWasmMain() __asm__("-");
-void nimWasmMain() {
-    void NimMain();
-    NimMain();
-}
-
 NIM_WASM_EXPORT const char __nimWasmInit __asm__(""" & '"' & initCode & """") = 0;
 
-N_LIB_EXPORT void* memcpy(void* a, void* b, size_t s) {
+N_LIB_PRIVATE void* memcpy(void* a, const void* b, size_t s) {
     char* aa = (char*)a;
     char* bb = (char*)b;
     while(s) {
@@ -98,7 +93,25 @@ N_LIB_EXPORT void* memcpy(void* a, void* b, size_t s) {
     return a;
 }
 
-N_LIB_EXPORT void* memset(void* a, int b, size_t s) {
+N_LIB_PRIVATE int memcmp(const void* a, const void* b, size_t s) {
+    char* aa = (char*)a;
+    char* bb = (char*)b;
+    if (aa == bb) return 0;
+
+    while(s) {
+        --s;
+        int ia = *aa;
+        int ib = *bb;
+        int r = ia - ib; // TODO: The result might be inverted. Verify against C standard.
+        if (r) return r;
+        *aa = *bb;
+        ++aa;
+        ++bb;
+    }
+    return 0;
+}
+
+N_LIB_PRIVATE void* memset(void* a, int b, size_t s) {
     char* aa = (char*)a;
     while(s) {
         --s;
@@ -108,21 +121,21 @@ N_LIB_EXPORT void* memset(void* a, int b, size_t s) {
     return a;
 }
 
-N_LIB_EXPORT size_t strlen(const char* a) {
+N_LIB_PRIVATE size_t strlen(const char* a) {
     const char* b = a;
     while (*b++);
     return b - a - 1;
 }
 
-N_LIB_EXPORT char* strerror(int errnum) {
+N_LIB_PRIVATE char* strerror(int errnum) {
     return "strerror is not supported";
 }
 
-N_LIB_EXPORT int* __errno_location() {
+N_LIB_PRIVATE int* __errno_location() {
     return &dummyErrno;
 }
 
-N_LIB_EXPORT char* strstr(char *haystack, const char *needle) {
+N_LIB_PRIVATE char* strstr(char *haystack, const char *needle) {
     if (haystack == NULL || needle == NULL) {
         return NULL;
     }
@@ -143,6 +156,47 @@ N_LIB_EXPORT char* strstr(char *haystack, const char *needle) {
 }
 
 """.}
+
+macro defDyncall(sig: static[string]): untyped =
+  let callbackIdent = ident"callback"
+  let callbackParams = newTree(nnkFormalParams)
+  let callbackCall = newCall(callbackIdent)
+
+  var params: seq[NimNode]
+  for i, c in sig:
+    let t = case c
+      of 'v': ident"void"
+      of 'i': ident"cint"
+      of 'd': ident"double"
+      else: raise newException(AssertionDefect, "Unexpected signature: " & $c)
+
+    if i == 0:
+      params.add(t)
+      callbackParams.add(t)
+    else:
+      let id = ident("arg" & $i)
+      params.add(newIdentDefs(id, t))
+      callbackParams.add(newIdentDefs(id, t))
+      callbackCall.add(id)
+
+  let callbackTy = newTree(nnkProcTy, callbackParams, newEmptyNode())
+  callbackTy.addPragma(ident"cdecl")
+  params.insert(newIdentDefs(callbackIdent, callbackTy), 1)
+
+  result = newProc(ident("dyncall"), params, callbackCall)
+  result.addPragma(newColonExpr(ident"exportc", newLit("_d" & sig)))
+  result.addPragma(ident"dynlib")
+  # echo repr result
+
+proc defineDyncall*(sig: static[string]) =
+  ## Call this function to make sure that the resulting wasm exposes
+  ## _dsig function to make dynamic calls by function address.
+  ## Calling this function with the same arguments more than once is a
+  ## noop.
+  defDyncall(sig)
+  mixin dyncall
+  var p = dyncall # Make sure nim doesn't dead-code-eliminate the generated func
+  p = nil
 
 proc isNodejsAux(): bool {.importwasm:"return typeof process != 'undefined'".}
 
