@@ -191,8 +191,14 @@ import strutils
 
 proc bytesInFormat(f: uint32): int32 =
   case f
-  of 0x1906: # GL_ALPHA
+  of 0x1906, 0x1909: # ALPHA, LUMINANCE
     1
+  of 0x190A: # LUMINANCE_ALPHA
+    2
+  of 0x1907: # RGB
+    3
+  of 0x1908: # RGBA
+    4
   else:
     echo "unknown format: ", toHex(f)
     assert(false, "Unknown format " & $f)
@@ -200,7 +206,7 @@ proc bytesInFormat(f: uint32): int32 =
 
 proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, border: int32, format, typ: uint32, data: pointer) {.exportc.} =
   case typ
-  of 0x1401: # GL_UNSIGNED_BYTE
+  of 0x1401: # UNSIGNED_BYTE
     glTexImage2DUint8I(target, level, internalFormat, width, height, border, format, typ, width * height * bytesInFormat(format), data)
   else:
     echo "unknown typ: ", toHex(format)
@@ -209,10 +215,12 @@ proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, b
 proc glTexSubImage2DUint8I(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, sz: int32, data: pointer) {.importwasm: """
   GLCtx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, typ, new Uint8Array(_nima.buffer, data, sz))
   """.}
+
 proc glTexSubImage2D(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, data: pointer) {.exportc.} =
   case typ
-  of 0x1401: # GL_UNSIGNED_BYTE
+  of 0x1401: # UNSIGNED_BYTE
     glTexSubImage2DUint8I(target, level, xoffset, yoffset, width, height, format, typ, width * height * bytesInFormat(format), data)
+  # of 0x8363: # UNSIGNED_SHORT_5_6_5
   else:
     echo "unknown typ: ", toHex(format)
     assert(false, "Unknown typ " & $format)

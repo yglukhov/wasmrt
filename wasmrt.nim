@@ -96,7 +96,7 @@ g._nimws = (s, a, l) => {
 // Write `int32Array` at `address`
 g._nimwi = (v, a) => new Int32Array(q.buffer, a).set(v);
 
-// function _nimwd(float32Array, address)
+// function _nimwf(float32Array, address)
 // Write `float32Array` at `address`
 g._nimwf = (v, a) => new Float32Array(q.buffer, a).set(v);
 
