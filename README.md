@@ -1,4 +1,4 @@
-# wasmrt [![Build Status](https://travis-ci.org/yglukhov/wasmrt.svg?branch=master)](https://travis-ci.org/yglukhov/nimwasmrt)
+# wasmrt [![Build Status](https://travis-ci.org/yglukhov/wasmrt.svg?branch=master)](https://travis-ci.org/yglukhov/wasmrt)
 
 Disclaimer. This is a proof of concept, use with caution.
 

@@ -11,6 +11,7 @@
 --d:noSignalHandler
 --exceptions:goto
 --app:lib
+--d:nimPreviewFloatRoundtrip # Avoid using sprintf as it's not available in wasm
 
 let llTarget = "wasm32-unknown-unknown-wasm"
 
