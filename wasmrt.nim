@@ -27,23 +27,24 @@ iterator arguments(formalParams: NimNode): tuple[idx: int, name, typ, default: N
       inc iParam
 
 macro importwasm*(body: string, p: untyped): untyped =
-    expectKind(p, nnkProcDef)
-    result = p
+  expectKind(p, nnkProcDef)
+  result = p
 
-    var argString = ""
-    for a in arguments(p.params):
-        if a.idx != 0: argString &= ","
-        argString &= $a.name
+  var argString = ""
+  for a in arguments(p.params):
+    if a.idx != 0: argString &= ","
+    argString &= $a.name
 
-    var body = body.strVal
-    when false:
-      body = "try {" & body & "} catch(e) { _nime.nimerr() }"
+  var body = body.strVal
+  when false:
+    body = "try {" & body & "} catch(e) { _nime.nimerr() }"
 
-    result.addPragma(newIdentNode("importc"))
-    result.addPragma(newColonExpr(newIdentNode("codegenDecl"), newLit("$# $#$# __asm__(\"" & escapeJs("\"" & argString & "\";" & body.minifyJs, "$$") & "\")")))
+  result.addPragma(newIdentNode("importc"))
+  result.addPragma(newColonExpr(newIdentNode("codegenDecl"), newLit("$# $#$# __asm__(\"" & escapeJs("\"" & argString & "\";" & body.minifyJs, "$$") & "\")")))
 
 when not defined(release):
   proc nimerr() {.exportwasm.} =
+    writeStackTrace()
     raise newException(Exception, "")
 
 const initCode = (""";
@@ -85,23 +86,23 @@ g._nimws = (s, a, l) => {
   var L = s.length;
   L = L < l ? L : l;
   if (L) {
-    var m = new Int8Array(g._nime.memory.buffer);
+    var m = new Int8Array(q.buffer, a);
     for (i = 0; i < L; ++i)
-      m[a + i] = s.charCodeAt(i);
+      m[i] = s.charCodeAt(i);
   }
 };
 
 // function _nimwi(int32Array, address)
 // Write `int32Array` at `address`
-g._nimwi = (v, a) => new Int32Array(g._nime.memory.buffer).set(v, a >> 2);
+g._nimwi = (v, a) => new Int32Array(q.buffer, a).set(v);
 
 // function _nimwd(float32Array, address)
 // Write `float32Array` at `address`
-g._nimwf = (v, a) => new Float32Array(g._nime.memory.buffer).set(v, a >> 2);
+g._nimwf = (v, a) => new Float32Array(q.buffer, a).set(v);
 
 // function _nimwd(float64Array, address)
 // Write `float64Array` at `address`
-g._nimwd = (v, a) => new Float64Array(g._nime.memory.buffer).set(v, a >> 3);
+g._nimwd = (v, a) => new Float64Array(q.buffer, a).set(v);
 
 W.instantiate(m, {env: o}).then(m => {
   g._nimm = m;

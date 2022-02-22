@@ -184,8 +184,39 @@ proc glDrawElements(a, b, c, d: uint32) {.exportc.} = glDrawElementsI(a, b, c, d
 proc glPixelStoreiI(a, b: uint32) {.importwasm: "GLCtx.pixelStorei(a, b)".}
 proc glPixelStorei(a, b: uint32) {.exportc.} = glPixelStoreiI(a, b)
 
-# proc glTexImage2DI() {.importwasm: "".}
-# proc glTexImage2D() {.exportc.} = glTexImage2DI()
+proc glTexImage2DUint8I(target: uint32, level, internalFormat: int32, width, height, border: int32, format, typ: uint32, sz: int32, data: pointer) {.importwasm: """
+  GLCtx.texImage2D(target, level, internalFormat, width, height, border, format, typ, new Uint8Array(_nima.buffer, data, sz))
+  """.}
+import strutils
+
+proc bytesInFormat(f: uint32): int32 =
+  case f
+  of 0x1906: # GL_ALPHA
+    1
+  else:
+    echo "unknown format: ", toHex(f)
+    assert(false, "Unknown format " & $f)
+    0
+
+proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, border: int32, format, typ: uint32, data: pointer) {.exportc.} =
+  case typ
+  of 0x1401: # GL_UNSIGNED_BYTE
+    glTexImage2DUint8I(target, level, internalFormat, width, height, border, format, typ, width * height * bytesInFormat(format), data)
+  else:
+    echo "unknown typ: ", toHex(format)
+    assert(false, "Unknown typ " & $format)
+
+proc glTexSubImage2DUint8I(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, sz: int32, data: pointer) {.importwasm: """
+  GLCtx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, typ, new Uint8Array(_nima.buffer, data, sz))
+  """.}
+proc glTexSubImage2D(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, data: pointer) {.exportc.} =
+  case typ
+  of 0x1401: # GL_UNSIGNED_BYTE
+    glTexSubImage2DUint8I(target, level, xoffset, yoffset, width, height, format, typ, width * height * bytesInFormat(format), data)
+  else:
+    echo "unknown typ: ", toHex(format)
+    assert(false, "Unknown typ " & $format)
+
 
 proc glBlendFuncSeparateI(a, b, c, d: uint32) {.importwasm: "GLCtx.blendFuncSeparate(a, b, c, d)".}
 proc glBlendFuncSeparate(a, b, c, d: uint32) {.exportc.} = glBlendFuncSeparateI(a, b, c, d)
@@ -228,8 +259,11 @@ proc glFramebufferRenderbuffer(a, b, c, d: uint32) {.exportc.} = glFramebufferRe
 # proc glFramebufferTexture2DI() {.importwasm: "".}
 # proc glFramebufferTexture2D() {.exportc.} = glFramebufferTexture2DI()
 
-proc glGetIntegervI(a: uint32): int32 {.importwasm: "return GLCtx.getParam(a)".}
-proc glGetIntegerv(a: uint32, v: ptr int32) {.exportc.} = v[] = glGetIntegervI(a)
+proc glGetIntegervI(a: uint32, v: ptr int32) {.importwasm: """
+  var o = GLCtx.getParameter(a);
+  _nimwi(o['length'] == undefined ? [o] : o, v)
+  """.}
+proc glGetIntegerv(a: uint32, v: ptr int32) {.exportc.} = glGetIntegervI(a, v)
 
 proc glGetBooleanvI(a: uint32): int32 {.importwasm: "return GLCtx.getParam(a)?1:0".}
 proc glGetBooleanv(a: uint32, v: ptr bool) {.exportc.} = v[] = glGetBooleanvI(a) != 0
