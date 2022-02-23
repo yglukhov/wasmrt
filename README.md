@@ -1,4 +1,4 @@
-# wasmrt [![Build Status](https://travis-ci.org/yglukhov/wasmrt.svg?branch=master)](https://travis-ci.org/yglukhov/wasmrt)
+# wasmrt [![Build Status](https://github.com/yglukhov/wasmrt/workflows/CI/badge.svg?branch=master)](https://github.com/yglukhov/wasmrt/actions?query=branch%3Amaster)
 
 Disclaimer. This is a proof of concept, use with caution.
 

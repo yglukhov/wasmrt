@@ -11,19 +11,19 @@ import os, oswalkdir
 
 proc buildExample(name: string, shouldFail = false) =
   echo "Running test ", name, (if shouldFail: " [should fail]" else: "")
-  exec "nim c --out:" & name & ".wasm tests/" & name
-  exec "wasm-gc " & name & ".wasm"
-  exec "wasm2wat -o " & name & ".wast " & name & ".wasm"
+  exec "nim c --out:tests/" & name & ".wasm tests/" & name
+  # exec "wasm-gc tests/" & name & ".wasm"
+  # exec "wasm2wat -o tests/" & name & ".wast tests/" & name & ".wasm"
   if shouldFail:
     var failed = false
     try:
-      exec "node ./tests/runwasm.js " & name & ".wasm"
+      exec "node ./tests/runwasm.js ./tests/" & name & ".wasm"
     except:
       echo "Test failed as it should"
       failed = true
     assert(failed, "Test " & name & " should fail but did not")
   else:
-    exec "node ./tests/runwasm.js " & name & ".wasm"
+    exec "node ./tests/runwasm.js tests/" & name & ".wasm"
 
 task test, "Test":
   for f in oswalkdir.walkDir("tests"):

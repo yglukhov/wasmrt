@@ -221,6 +221,15 @@ N_LIB_PRIVATE char* strstr(char *haystack, const char *needle) {
   }
   return NULL;
 }
+
+N_LIB_PRIVATE double fmod(double x, double y) {
+  return x - trunc(x / y) * y;
+}
+
+N_LIB_PRIVATE float fmodf(float x, float y) {
+  return fmod(x, y);
+}
+
 """.}
 
 macro defDyncall(sig: static[string]): untyped =
@@ -359,3 +368,16 @@ when not defined(gcDestructors):
   GC_disable()
 
 import wasmrt/libc
+import std/compilesettings
+
+# Compiler and linker options
+static:
+  # Nim will pass -lm to linker, so we provide a stub one, by compiling empty c file into nimcache/libm.a, and pointing
+  # the linker to nimcache
+  const nimcache = querySetting(nimcacheDir)
+  {.passL: "-L" & nimcache.}
+  var compilerPath = querySetting(ccompilerPath)
+  if compilerPath == "":
+    compilerPath = "clang"
+  echo compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/libm.a -x c -"
+  discard staticExec(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/libm.a -x c -", input = "\n")
