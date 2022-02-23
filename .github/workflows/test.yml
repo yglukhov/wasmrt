@@ -24,5 +24,10 @@ jobs:
     - name: Test
       shell: bash
       run: |
+        sudo apt-get install gcc-multilib # Support for 32bits
+        clang --version
+        # For some reason wasm-ld is not in PATH, so add it. llvm version should probably match that of clang
+        export PATH=$PATH:/usr/lib/llvm-11/bin
+
         nim --version
         nimble test

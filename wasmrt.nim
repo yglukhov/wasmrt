@@ -372,12 +372,16 @@ import std/compilesettings
 
 # Compiler and linker options
 static:
-  # Nim will pass -lm to linker, so we provide a stub one, by compiling empty c file into nimcache/libm.a, and pointing
+  # Nim will pass -lm and -lrt to linker, so we provide stubs, by compiling empty c file into nimcache/lib*.a, and pointing
   # the linker to nimcache
   const nimcache = querySetting(nimcacheDir)
   {.passL: "-L" & nimcache.}
   var compilerPath = querySetting(ccompilerPath)
   if compilerPath == "":
     compilerPath = "clang"
-  echo compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/libm.a -x c -"
+  when defined(windows):
+    discard staticExec("mkdir " & nimcache)
+  else:
+    discard staticExec("mkdir -p " & nimcache)
   discard staticExec(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/libm.a -x c -", input = "\n")
+  discard staticExec(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/librt.a -x c -", input = "\n")
