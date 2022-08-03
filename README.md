@@ -5,7 +5,7 @@ Disclaimer. This is a proof of concept, use with caution.
 Compile nim to wasm
 ```nim
 import wasmrt
-proc consoleLog(a: cstring) {.importwasm: "console.log(_nimsj($0))".}
+proc consoleLog(a: cstring) {.importwasm: "console.log(_nimsj(a))".}
 consoleLog("Hello, world!")
 ```
 
@@ -16,7 +16,7 @@ node tests/runwasm.js test.wasm
 
 # Prerequisites
 - clang 8.0 or later
-- Special Nim config, like [this one](https://github.com/yglukhov/wasmrt/blob/master/tests/test.nims)
+- Special Nim config, like [this one](https://github.com/yglukhov/wasmrt/blob/master/tests/config.nims)
 - [Optional] [wasm-gc](https://github.com/alexcrichton/wasm-gc) - a tool to compact your wasm file
 
 # Run your wasm
