@@ -3,7 +3,7 @@ import ../wasmrt
 proc wasmrtInitGl() {.importwasm: """
 var w = window;
 w._wrtglp = [null];
-w._wrti = (b) => {var a = _wrtglp, r = a.length; a[r] = b; return r};
+w._wrti = (b) => {return _wrtglp.push(b) - 1};
 w._wrtglap = null;
 """.}
 
