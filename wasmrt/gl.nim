@@ -7,6 +7,8 @@ w._wrti = (b) => {return _wrtglp.push(b) - 1};
 w._wrtglap = null;
 """.}
 
+{.push stackTrace:off.}
+
 proc glClearColorI(a, b, c, d: float32) {.importwasm: "GLCtx.clearColor(a, b, c, d)".}
 proc glClearColor(a, b, c, d: float32) {.exportc.} = glClearColorI(a, b, c, d)
 
@@ -61,8 +63,8 @@ proc glCreateTexture(): uint32 {.exportc.} = glCreateTextureI()
 proc glGenTextures(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} =
   for i in 0 ..< sz: tx[i] = glCreateTextureI()
 
-proc glBindTextureI(s, p: uint32): uint32 {.importwasm: "GLCtx.bindTexture(s, _wrtglp[p])".}
-proc glBindTexture(s, p: uint32): uint32 {.exportc.} = glBindTextureI(s, p)
+proc glBindTextureI(s, p: uint32) {.importwasm: "GLCtx.bindTexture(s, _wrtglp[p])".}
+proc glBindTexture(s, p: uint32) {.exportc.} = glBindTextureI(s, p)
 
 proc glGenerateMipmapI(h: uint32) {.importwasm: "GLCtx.generateMipmap(h)".}
 proc glGenerateMipmap(h: uint32) {.exportc.} = glGenerateMipmapI(h)
@@ -92,20 +94,20 @@ proc glVertexAttribPointerI(i: uint32, s: int32, t: uint32, n: bool, r: int32, o
 proc glVertexAttribPointer(i: uint32, s: int32, t: uint32, n: bool, r: int32, o: pointer) {.exportc.} =
   glVertexAttribPointerI(i, s, t, n, r, o)
 
-proc glUniformMatrix4fvI(l, c: uint32, t: bool, v: ptr float32) {.importwasm: "GLCtx.uniformMatrix4fv(_wrtglap._nimu[l], t, new Float32Array(_nima.buffer, v, 16))".}
+proc glUniformMatrix4fvI(l: uint32, t: bool, v: ptr float32) {.importwasm: "GLCtx.uniformMatrix4fv(_wrtglap._nimu[l], t, new Float32Array(_nima.buffer, v, 16))".}
 proc glUniformMatrix4fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix4")
-  glUniformMatrix4fvI(l, c, t, v)
+  glUniformMatrix4fvI(l, t, v)
 
-proc glUniformMatrix3fvI(l, c: uint32, t: bool, v: ptr float32) {.importwasm: "GLCtx.uniformMatrix3fv(_wrtglap._nimu[l], t, new Float32Array(_nima.buffer, v, 9))".}
+proc glUniformMatrix3fvI(l: uint32, t: bool, v: ptr float32) {.importwasm: "GLCtx.uniformMatrix3fv(_wrtglap._nimu[l], t, new Float32Array(_nima.buffer, v, 9))".}
 proc glUniformMatrix3fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix3")
-  glUniformMatrix3fvI(l, c, t, v)
+  glUniformMatrix3fvI(l, t, v)
 
-proc glUniformMatrix2fvI(l, c: uint32, t: bool, v: ptr float32) {.importwasm: "GLCtx.uniformMatrix2fv(_wrtglap._nimu[l], t, new Float32Array(_nima.buffer, v, 4))".}
+proc glUniformMatrix2fvI(l: uint32, t: bool, v: ptr float32) {.importwasm: "GLCtx.uniformMatrix2fv(_wrtglap._nimu[l], t, new Float32Array(_nima.buffer, v, 4))".}
 proc glUniformMatrix2fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix2")
-  glUniformMatrix2fvI(l, c, t, v)
+  glUniformMatrix2fvI(l, t, v)
 
 proc glGetUniformLocationI(h: uint32, n: cstring): uint32 {.importwasm: """
   var p = _wrtglp[h], N = _nimsj(n);
@@ -113,9 +115,7 @@ proc glGetUniformLocationI(h: uint32, n: cstring): uint32 {.importwasm: """
   var r = p._nimun[N];
   if (r === undefined) {
     p._nimu ||= [];
-    r = p._nimu.length;
-    p._nimu[r] = GLCtx.getUniformLocation(p, N);
-    p._nimun[N] = r;
+    r = p._nimun[N] = p._nimu.push(GLCtx.getUniformLocation(p, N)) - 1
   }
   return r
   """.}
@@ -184,8 +184,8 @@ proc glDrawElements(a, b, c, d: uint32) {.exportc.} = glDrawElementsI(a, b, c, d
 proc glPixelStoreiI(a, b: uint32) {.importwasm: "GLCtx.pixelStorei(a, b)".}
 proc glPixelStorei(a, b: uint32) {.exportc.} = glPixelStoreiI(a, b)
 
-proc glTexImage2DUint8I(target: uint32, level, internalFormat: int32, width, height, border: int32, format, typ: uint32, sz: int32, data: pointer) {.importwasm: """
-  GLCtx.texImage2D(target, level, internalFormat, width, height, border, format, typ, new Uint8Array(_nima.buffer, data, sz))
+proc glTexImage2DUint8I(t: uint32, l, i: int32, w, h, b: int32, f, k: uint32, s: int32, p: pointer) {.importwasm: """
+  GLCtx.texImage2D(t, l, i, w, h, b, f, k, new Uint8Array(_nima.buffer, p, s))
   """.}
 import strutils
 
@@ -212,8 +212,8 @@ proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, b
     echo "unknown typ: ", toHex(format)
     assert(false, "Unknown typ " & $format)
 
-proc glTexSubImage2DUint8I(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, sz: int32, data: pointer) {.importwasm: """
-  GLCtx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, typ, new Uint8Array(_nima.buffer, data, sz))
+proc glTexSubImage2DUint8I(t: uint32, l, x, y: int32, w, h: int32, f, k: uint32, s: int32, p: pointer) {.importwasm: """
+  GLCtx.texSubImage2D(t, l, x, y, w, h, f, k, new Uint8Array(_nima.buffer, p, s))
   """.}
 
 proc glTexSubImage2D(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, data: pointer) {.exportc.} =
@@ -294,5 +294,7 @@ proc glGetShaderInfoLog(s: uint32, maxLength: int32, length: ptr int32, infoLog:
   glGetInfoLogI(1, s, maxLength, length, infoLog)
 proc glGetProgramInfoLog(s: uint32, maxLength: int32, length: ptr int32, infoLog: ptr char) {.exportc.} =
   glGetInfoLogI(0, s, maxLength, length, infoLog)
+
+{.pop.} # stackTrace:off
 
 wasmrtInitGl()
