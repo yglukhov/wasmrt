@@ -1,5 +1,6 @@
 --os:linux
 --cpu:i386
+--threads:off
 --cc:clang
 --gc:orc
 --d:release
