@@ -2,9 +2,7 @@ import posix
 
 import ../wasmrt
 
-proc gettimeImpl(): cint {.importwasm: """
-return Date.now()
-""".}
+proc gettimeImpl(): cint {.importwasmf: "Date.now".}
 
 proc clock_gettime(clkId: Clockid, tp: var Timespec): cint {.exportc.} =
   let t = gettimeImpl()

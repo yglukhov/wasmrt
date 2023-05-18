@@ -1,7 +1,7 @@
 import ../wasmrt
 
-proc setTimeoutAux(t: int, c: proc(p: pointer) {.cdecl.}, p: pointer) {.importwasm: """
-setTimeout(() => _nime._dvi(c, p), t)
+proc setTimeoutAux(t: int, c: proc(p: pointer) {.cdecl.}, p: pointer) {.importwasmraw: """
+setTimeout(() => _nime._dvi($1, $2), $0)
 """.}
 
 type

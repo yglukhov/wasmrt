@@ -5,7 +5,7 @@ Disclaimer. This is a proof of concept, use with caution.
 Compile nim to wasm
 ```nim
 import wasmrt
-proc consoleLog(a: cstring) {.importwasm: "console.log(_nimsj(a))".}
+proc consoleLog(a: cstring) {.importwasmraw: "console.log(_nimsj($0))".}
 consoleLog("Hello, world!")
 ```
 

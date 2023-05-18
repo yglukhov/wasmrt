@@ -1,3 +1,4 @@
+import strutils
 
 const EOF = 0
 
@@ -243,7 +244,7 @@ proc minifyJs*(s: string): string =
   var ctx: Ctx
   ctx.input = s
   ctx.jsminAux()
-  result = ctx.output
+  result = strip(ctx.output)
 
 
 proc escapeJs*(s: string, escapeDollarWith = "$"): string {.compileTime.} =
