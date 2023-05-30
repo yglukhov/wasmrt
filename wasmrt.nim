@@ -1,16 +1,16 @@
 import macros, strutils
 import wasmrt/minify
 
+const wasmExportCodegenDecl = when defined(cpp):
+                  "extern \"C\" __attribute__ ((visibility (\"default\"))) $# $#$#"
+                else:
+                  "__attribute__ ((visibility (\"default\"))) $# $#$#"
+
 macro exportwasm*(p: untyped): untyped =
   expectKind(p, nnkProcDef)
   result = p
   result.addPragma(ident"exportc")
-  let cgenDecl = when defined(cpp):
-                   "extern \"C\" __attribute__ ((visibility (\"default\"))) $# $#$#"
-                 else:
-                   "__attribute__ ((visibility (\"default\"))) $# $#$#"
-
-  result.addPragma(newColonExpr(ident"codegenDecl", newLit(cgenDecl)))
+  result.addPragma(newColonExpr(ident"codegenDecl", newLit(wasmExportCodegenDecl)))
 
 proc stripSinkFromArgType(t: NimNode): NimNode =
   result = t
@@ -363,7 +363,7 @@ W.instantiate(m, {env: o}).then(m => {
   g._nime = m.exports;
   q = _nime.memory;
   _nimmu();
-  _nime.NimMain()
+  _nime.NimMain();
 })
 """).minifyJs().escapeJs()
 
@@ -648,6 +648,12 @@ proc mmap(a: pointer, len: csize_t, prot, flags, fildes: cint, off: int): pointe
     return nil
 
   wasmAlloc(len)
+
+# Suppress __wasm_call_ctors
+# https://stackoverflow.com/questions/72568387/why-is-an-objects-constructor-being-called-in-every-exported-wasm-function
+proc initialize() {.stackTrace: off, exportc: "_initialize", codegenDecl: wasmExportCodegenDecl.} =
+  proc ctors() {.importc: "__wasm_call_ctors".}
+  ctors()
 
 when not defined(gcDestructors):
   GC_disable()
