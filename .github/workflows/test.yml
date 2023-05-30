@@ -24,6 +24,7 @@ jobs:
     - name: Test
       shell: bash
       run: |
+        sudo apt-get update
         sudo apt-get install gcc-multilib # Support for 32bits
         clang --version
         # For some reason wasm-ld is not in PATH, so add it. llvm version should probably match that of clang
