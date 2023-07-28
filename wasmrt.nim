@@ -219,6 +219,11 @@ when not defined(release):
     writeStackTrace()
     raise newException(Exception, "")
 
+proc to*(o: sink JSObj, T: typedesc[JSObj]): T {.inline.} =
+  let r = o.o
+  wasMoved(o)
+  T(o: r)
+
 # Return type
 # R - 4 - 0 return void, 1 as is, 2 obj, 3 string
 # F - 2 - 0 dont prepend first arg, 1 prepend
