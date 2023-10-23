@@ -419,6 +419,24 @@ N_LIB_PRIVATE void* memchr(register const void* src_void, int c, size_t length) 
   return NULL;
 }
 
+N_LIB_PRIVATE int memcmp(const void* a, const void* b, size_t s) {
+  char* aa = (char*)a;
+  char* bb = (char*)b;
+  if (aa == bb) return 0;
+
+  while(s) {
+    --s;
+    int ia = *aa;
+    int ib = *bb;
+    int r = ia - ib; // TODO: The result might be inverted. Verify against C standard.
+    if (r) return r;
+    *aa = *bb;
+    ++aa;
+    ++bb;
+  }
+  return 0;
+}
+
 N_LIB_PRIVATE void* memmem(const void *l, size_t l_len, const void *s, size_t s_len) {
   register char *cur, *last;
   const char *cl = (const char *)l;
@@ -444,24 +462,6 @@ N_LIB_PRIVATE void* memmem(const void *l, size_t l_len, const void *s, size_t s_
       return cur;
 
   return NULL;
-}
-
-N_LIB_PRIVATE int memcmp(const void* a, const void* b, size_t s) {
-  char* aa = (char*)a;
-  char* bb = (char*)b;
-  if (aa == bb) return 0;
-
-  while(s) {
-    --s;
-    int ia = *aa;
-    int ib = *bb;
-    int r = ia - ib; // TODO: The result might be inverted. Verify against C standard.
-    if (r) return r;
-    *aa = *bb;
-    ++aa;
-    ++bb;
-  }
-  return 0;
 }
 
 N_LIB_PRIVATE void* memset(void* a, int b, size_t s) {
@@ -508,6 +508,14 @@ N_LIB_PRIVATE char* strstr(char *haystack, const char *needle) {
   return NULL;
 }
 
+N_LIB_PRIVATE double trunc(double x) {
+  if (x >= 0.0) {
+    return (double)((int)x);
+  } else {
+    return -((double)((int)-x));
+  }
+}
+
 N_LIB_PRIVATE double fmod(double x, double y) {
   return x - trunc(x / y) * y;
 }
@@ -517,6 +525,24 @@ N_LIB_PRIVATE float fmodf(float x, float y) {
 }
 
 """].}
+
+proc consoleWarn(a: cstring) {.importwasmf: "console.warn".}
+
+proc logException(e: ref Exception) =
+  consoleWarn("Exception in dynCall")
+  consoleWarn(e.msg)
+  when compileOption("stackTrace"):
+    consoleWarn($e.getStackTrace)
+
+template dyncallWrap(a: untyped) =
+  when defined(release):
+    a
+  else:
+    try:
+      a
+    except Exception as e:
+      logException(e)
+      raise
 
 macro defDyncall(sig: static[string]): untyped =
   let callbackIdent = ident"callback"
@@ -544,7 +570,8 @@ macro defDyncall(sig: static[string]): untyped =
   callbackTy.addPragma(ident"cdecl")
   params.insert(newIdentDefs(callbackIdent, callbackTy), 1)
 
-  result = newProc(ident("dyncall"), params, callbackCall)
+  let wrappedCall = newCall(bindSym"dyncallWrap", callbackCall)
+  result = newProc(ident("dyncall"), params, wrappedCall)
   result.addPragma(newColonExpr(ident"exportc", newLit("_d" & sig)))
   result.addPragma(ident"dynlib")
   # echo repr result
@@ -562,8 +589,6 @@ proc defineDyncall*(sig: static[string]) =
 proc isNodejsAux(): bool {.importwasmp: "typeof process!='undefined'".}
 
 proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(_nims($1,$2))".}
-
-proc consoleWarn(a: cstring) {.importwasmf: "console.warn".}
 
 proc consoleAppend(b: pointer, l: int) {.importwasmraw: "_nimc += _nims($0,$1)".}
 proc consoleFlush(s: int) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''".}
