@@ -679,11 +679,20 @@ proc mmap(a: pointer, len: csize_t, prot, flags, fildes: cint, off: int): pointe
 
   wasmAlloc(len)
 
+proc malloc(sz: csize_t): pointer {.exportc.} = alloc(sz)
+proc free(p: pointer) {.exportc.} = dealloc(p)
+
 # Suppress __wasm_call_ctors
 # https://stackoverflow.com/questions/72568387/why-is-an-objects-constructor-being-called-in-every-exported-wasm-function
 proc initialize() {.stackTrace: off, exportc: "_initialize", codegenDecl: wasmExportCodegenDecl.} =
   proc ctors() {.importc: "__wasm_call_ctors".}
   ctors()
+
+when compileOption("stackTrace"):
+  {.push stackTrace: off.}
+  proc wasmStackTrace() {.exportwasm.} =
+    writeStackTrace()
+  {.pop.}
 
 when not defined(gcDestructors):
   GC_disable()
