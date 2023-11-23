@@ -31,4 +31,5 @@ jobs:
         export PATH=$PATH:/usr/lib/llvm-11/bin
 
         nim --version
+        nimble install -dy
         nimble test
