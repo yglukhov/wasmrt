@@ -17,7 +17,7 @@ node tests/runwasm.js test.wasm
 # Prerequisites
 - clang 8.0 or later
 - Special Nim config, like [this one](https://github.com/yglukhov/wasmrt/blob/master/tests/config.nims)
-- [Optional] [wasm-gc](https://github.com/alexcrichton/wasm-gc) - a tool to compact your wasm file
+- [Optional] [wasm-opt](https://github.com/WebAssembly/binaryen) - a tool to compact your wasm file
 
 # Run your wasm
 The wasm file generated this way is pretty standalone, and requires only the following JavaScript code to bootstrap:
