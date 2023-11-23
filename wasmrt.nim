@@ -682,6 +682,9 @@ proc mmap(a: pointer, len: csize_t, prot, flags, fildes: cint, off: int): pointe
 proc malloc(sz: csize_t): pointer {.exportc.} = alloc(sz)
 proc free(p: pointer) {.exportc.} = dealloc(p)
 
+# proc strtodimpl(p: cstring): cdouble {.importwasmf: "parseFloat".}
+# proc strtod(p: cstring): cdouble {.exportc, stackTrace: off.} = strtodimpl(p)
+
 # Suppress __wasm_call_ctors
 # https://stackoverflow.com/questions/72568387/why-is-an-objects-constructor-being-called-in-every-exported-wasm-function
 proc initialize() {.stackTrace: off, exportc: "_initialize", codegenDecl: wasmExportCodegenDecl.} =

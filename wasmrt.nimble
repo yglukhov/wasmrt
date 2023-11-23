@@ -4,8 +4,10 @@ version       = "0.1.0"
 author        = "Yuriy Glukhov"
 description   = "Nim wasm runtime"
 license       = "MIT"
+bin           = @["wasmrt/wasm2html"]
 
 # Dependencies
+requires "zippy" # For wasm2html
 
 import os, oswalkdir
 
