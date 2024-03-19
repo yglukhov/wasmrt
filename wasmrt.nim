@@ -1,16 +1,12 @@
 import macros, strutils
 import wasmrt/minify
 
-const wasmExportCodegenDecl = when defined(cpp):
-                  "extern \"C\" __attribute__ ((visibility (\"default\"))) $# $#$#"
-                else:
-                  "__attribute__ ((visibility (\"default\"))) $# $#$#"
-
 macro exportwasm*(p: untyped): untyped =
   expectKind(p, nnkProcDef)
   result = p
-  result.addPragma(ident"exportc")
-  result.addPragma(newColonExpr(ident"codegenDecl", newLit(wasmExportCodegenDecl)))
+  let name = $p.name
+  let codegenPragma = "__attribute__ ((export_name (\"" & name & "\"))) $# $#$#"
+  result.addPragma(newColonExpr(ident"codegenDecl", newLit(codegenPragma)))
 
 proc stripSinkFromArgType(t: NimNode): NimNode =
   result = t
@@ -365,21 +361,22 @@ g._nimwd = (v, a) => new Float64Array(q.buffer, a).set(v);
 
 W.instantiate(m, {env: o}).then(m => {
   g._nimm = m;
-  g._nime = m.exports;
-  q = _nime.memory;
+  n = g._nime = m.exports;
+  q = n.memory;
   _nimmu();
-  _nime.NimMain();
+  for(i in n) if (i[0]==';') n[i]()
 })
 """).minifyJs().escapeJs()
 
 {.emit: ["""
-#define NIM_WASM_EXPORT N_LIB_EXPORT __attribute__((visibility ("default")))
-
 int stdout = 0;
 int stderr = 1;
 static int dummyErrno = 0;
 
-NIM_WASM_EXPORT const char __nimWasmInit __asm__(""" & '"' & initCode & """") = 0;
+void __nimWasmInit() __attribute__((export_name(""" & '"' & initCode & """"))) {
+  void NimMain();
+  NimMain();
+}
 
 N_LIB_PRIVATE void* memcpy(void* a, const void* b, size_t s) {
   char* aa = (char*)a;
@@ -572,8 +569,8 @@ macro defDyncall(sig: static[string]): untyped =
 
   let wrappedCall = newCall(bindSym"dyncallWrap", callbackCall)
   result = newProc(ident("dyncall"), params, wrappedCall)
-  result.addPragma(newColonExpr(ident"exportc", newLit("_d" & sig)))
-  result.addPragma(ident"dynlib")
+  let codegenPragma = "__attribute__ ((export_name (\"" & "_d" & sig & "\"))) $# $#$#"
+  result.addPragma(newColonExpr(ident"codegenDecl", newLit(codegenPragma)))
   # echo repr result
 
 proc defineDyncall*(sig: static[string]) =
@@ -687,7 +684,7 @@ proc free(p: pointer) {.exportc.} = dealloc(p)
 
 # Suppress __wasm_call_ctors
 # https://stackoverflow.com/questions/72568387/why-is-an-objects-constructor-being-called-in-every-exported-wasm-function
-proc initialize() {.stackTrace: off, exportc: "_initialize", codegenDecl: wasmExportCodegenDecl.} =
+proc initialize() {.stackTrace: off, exportc: "_initialize".} =
   proc ctors() {.importc: "__wasm_call_ctors".}
   ctors()
 
