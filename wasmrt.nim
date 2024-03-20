@@ -29,31 +29,70 @@ type
 
 proc isNil*(o: JSObj): bool {.inline.} = o.o.isNil
 
-proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): string =
-  when t is (JSRef|JSObj):
-    if prop:
-      if numArgs > 0: "p" # 210
-      else: "m" # 200
-    elif meth: "q" # 211
-    else: "n" # 201
-  elif t is string:
-    if prop:
-      if numArgs > 0: "v" # 310
-      else: "s" # 300
-    elif meth: "w" # 311
-    else: "t" # 301
-  elif t is void:
-    if prop:
-      if numArgs > 1: "f" # 012
-      else: "c" # 002
-    elif meth: "e" # 011
-    else: "b" # 001
+# Return type
+# R - 3 - 0 return void, 1 as is, 2 obj
+# F - 2 - 0 dont prepend first arg, 1 prepend
+# A - 3 - 0 dont append args, 1 append args as call, 2 assign last arg
+
+# arg:
+# R - pass as is
+# o - convert to object
+# s - convert to string
+
+proc retTypeSig(r, f, a: int): string =
+  case (r * 100 + f * 10 + a)
+  of 000: "a"
+  of 001: "b"
+  of 002: "c"
+  of 010: "d"
+  of 011: "e"
+  of 012: "f"
+  of 100: "g"
+  of 101: "h"
+  of 102: "i"
+  of 110: "j"
+  of 111: "k"
+  of 112: "l"
+  of 200: "m"
+  of 201: "n"
+  of 202: "o"
+  of 210: "p"
+  of 211: "q"
+  of 212: "r"
   else:
-    if prop:
-      if numArgs > 0: "j" # 110
-      else: "g" # 100
-    elif meth: "k" # 111
-    else: "h" # 101
+    doAssert(false)
+    ""
+
+proc retTypeR(t: typedesc): int =
+  when t is (JSRef|JSObj): 2
+  elif t is void: 0
+  elif t is (int|int32|uint|uint32|bool): 1
+
+proc retTypeSig(t: typedesc, f, a: int): string =
+  retTypeSig(retTypeR(t), f, a)
+
+proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): string =
+  let r = retTypeR(t)
+  var f = 0
+  var a = 0
+
+  if prop:
+    if (numArgs > 1 and r == 0):
+      f = 1
+      a = 2
+    elif (numArgs > 0 and r != 0):
+      f = 1
+      a = 0
+    else:
+      f = 0
+      a = 0
+  elif meth:
+    f = 1
+    a = 1
+  else:
+    f = 0
+    a = 1
+  retTypeSig(r, f, a)
 
 template toWasm[T](a: T): auto =
   when a is string:
@@ -128,7 +167,7 @@ proc numArgsSig(a: int): string {.compileTime.} =
   doAssert(a < maxArgs, "Number of arguments can not exceed " & $maxArgs)
   $char(a + ord('0'))
 
-proc importwasmAux(body: string, p: NimNode, raw, prop, meth: bool): NimNode =
+proc importWasmAux(body: string, p: NimNode, raw, expr, prop, meth: bool): NimNode =
   p.expectKind(nnkProcDef)
   var numArgs = 0
   for _, _, _, _ in p.params.arguments:
@@ -137,7 +176,10 @@ proc importwasmAux(body: string, p: NimNode, raw, prop, meth: bool): NimNode =
   let nas = numArgsSig(numArgs)
   var sig: NimNode
   if raw:
-    sig = newLit("a" & nas)
+    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", newLit(0), newLit(0), newLit(0)), newLit(nas))
+  elif expr:
+    let retType = p.params[0] or ident"void"
+    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(0), newLit(0)), newLit(nas))
   else:
     let retType = p.params[0] or ident"void"
     sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(prop), newLit(meth), newLit(numArgs)), newLit(nas))
@@ -161,7 +203,7 @@ macro importwasmp*(a1: untyped, more: varargs[untyped]): untyped =
   # proc document(w, o: JSObj) {.importwasmp.} # js: w.document = o
   # ```
   let (b, n) = parseArgs(a1, more)
-  result = importWasmAux(n, b, false, true, false)
+  result = importWasmAux(n, b, false, false, true, false)
 
 macro importwasmm*(a1: untyped, more: varargs[untyped]): untyped =
   # Import method from js to wasm
@@ -169,7 +211,7 @@ macro importwasmm*(a1: untyped, more: varargs[untyped]): untyped =
   # proc getElementById(d: JSObj, id: cstring): JSObj {.importwasmm.} # js: return d.getElementById(id)
   # ```
   let (b, n) = parseArgs(a1, more)
-  result = importWasmAux(n, b, false, false, true)
+  result = importWasmAux(n, b, false, false, false, true)
 
 macro importwasmf*(a1: untyped, more: varargs[untyped]): untyped =
   # Import function from js to wasm
@@ -177,10 +219,11 @@ macro importwasmf*(a1: untyped, more: varargs[untyped]): untyped =
   # proc alert(t: cstring) {.importwasmf.} # js: alert(t)
   # ```
   let (b, n) = parseArgs(a1, more)
-  result = importWasmAux(n, b, false, false, false)
+  result = importWasmAux(n, b, false, false, false, false)
 
 macro importwasmraw*(name: string, b: untyped): untyped =
-  # Import raw chunk of js code to wasm
+  # Import raw chunk of js code to wasm. It's usually better
+  # to use `importwasmexpr` instead.
   # ```
   # proc myfunction(t: cstring) {.importwasmraw: """
   #   var d = document;
@@ -190,7 +233,19 @@ macro importwasmraw*(name: string, b: untyped): untyped =
   # ```
   # Refer to args with `$NUM`, NUM starting from 0.
   # You can use JS helpers exposed by wasmrt, such as _nimo, _nimok, _nimsj, etc.
-  result = importWasmAux(name.strVal, b, true, false, false)
+  result = importWasmAux(name.strVal, b, true, false, false, false)
+
+macro importwasmexpr*(name: string, b: untyped): untyped =
+  # Import raw chunk of js code to wasm, but prepend corresponding return
+  # directive in front of it, if necessary.
+  # ```
+  # proc myfunction(t: cstring): JSRef {.importwasmexpr: """
+  #   document.getElementById(_nimsj($0))
+  #   """.}
+  # ```
+  # Refer to args with `$NUM`, NUM starting from 0.
+  # You can use JS helpers exposed by wasmrt, such as _nimo, _nimok, _nimsj, etc.
+  result = importWasmAux(name.strVal, b, false, true, false, false)
 
 proc copyAux(r: JSRef): uint32 {.importwasmf: "_nimok".}
 proc copy(r: JSRef): JSRef {.inline, stackTrace: off.} = cast[JSRef](copyAux(r))
@@ -220,43 +275,6 @@ proc to*(o: sink JSObj, T: typedesc[JSObj]): T {.inline.} =
   wasMoved(o)
   T(o: r)
 
-# Return type
-# R - 4 - 0 return void, 1 as is, 2 obj, 3 string
-# F - 2 - 0 dont prepend first arg, 1 prepend
-# A - 3 - 0 dont append args, 1 append args as call, 2 assign last arg
-# RRRFAA
-
-# RFA
-# 000 a
-# 001 b
-# 002 c
-# 010 d
-# 011 e
-# 012 f
-# 100 g
-# 101 h
-# 102 i
-# 110 j
-# 111 k
-# 112 l
-# 200 m
-# 201 n
-# 202 o
-# 210 p
-# 211 q
-# 212 r
-# 300 s
-# 301 t
-# 302 u
-# 310 v
-# 311 w
-# 312 x
-
-# arg:
-# R - pass as is
-# o - convert to object
-# s - convert to string
-
 const initCode = (""";
 var W = WebAssembly, f = W.Module.imports(m), o = {}, g = globalThis, q, b;
 for (i of f) {
@@ -265,17 +283,16 @@ for (i of f) {
     var r = n[1],
     p = n.charCodeAt(2)-48,
     a='',
-    b = n.substring(r=='a'?3:p+3),
+    j = t => t.includes(r)|0,
+    b = n.substring(j('agm')?3:p+3),
     w = (a, t) => t=='o'?`_nimo[${a}]`:t=='s'?`_nimsj(${a})`:a,
     v = i => w('$' + i, n[i + 3]),
-    j = t => t.includes(r)|0,
-    M = j('defjklpqrvwx'), // Prepend first arg
-    O = j('mnopqr'), // Return obj
-    S = j('stuvwx'); // Return string
+    M = j('defjklpqr'), // Prepend first arg
+    O = j('mnopqr'); // Return obj
 
     for(I=0;I<p;++I)a+=(I?',$':'$')+I;
 
-    if (j('behknqtw')) { // have arguments
+    if (j('behknq')) { // have arguments
       b += '(';
       for (I = M; I < p; ++I)
         b += (I-M ? ',' : '') + v(I);
@@ -283,13 +300,11 @@ for (i of f) {
     }
     if (M)
       b = v(0) + '.' + b;
-    if (j('cfilorux'))
+    if (j('cfilor'))
       b += '=' + v(p-1);
     if (O)
       b = `_nimok(${b})`;
-    if (S)
-      b = `_nimem_s(${b})`;
-    if (O|S|j('ghijkl'))
+    if (O|j('ghijkl'))
       b = 'return ' + b;
     o[n] = new Function(a, b)
   }
@@ -584,6 +599,13 @@ proc defineDyncall*(sig: static[string]) =
   p = nil
 
 proc isNodejsAux(): bool {.importwasmp: "typeof process!='undefined'".}
+proc isNodejs(): bool {.inline.} =
+  when defined(wasmrtOnlyBrowser):
+    false
+  elif defined(wasmrtOnlyNode):
+    true
+  else:
+    isNodejsAux()
 
 proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(_nims($1,$2))".}
 
@@ -594,7 +616,7 @@ proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.
   if cast[int](stream) in {0, 1}:
     # stdout
     let fzs = int(sz * nmemb)
-    if isNodejsAux():
+    if isNodejs():
       nodejsWriteToStream(cast[int](stream), p, fzs)
     else:
       consoleAppend(p, fzs)
@@ -610,13 +632,13 @@ proc exit(code: cint) {.exportc.} =
     consoleWarn "exit called, ignoring"
 
 proc fflush(stream: pointer): cint {.exportc.} =
-  if cast[int](stream) in {0, 1} and not isNodejsAux():
+  if cast[int](stream) in {0, 1} and not isNodejs():
     consoleFlush(cast[int](stream))
 
 proc fputc(c: cint, stream: pointer): cint {.exportc.} =
   if cast[int](stream) == 0:
     var buf = cast[uint8](c)
-    if isNodejsAux():
+    if isNodejs():
       nodejsWriteToStream(cast[int](stream), addr buf, 1)
   else:
     consoleWarn "fputc called, ignoring"
