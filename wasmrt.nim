@@ -66,7 +66,9 @@ proc retTypeSig(r, f, a: int): string =
 proc retTypeR(t: typedesc): int =
   when t is (JSRef|JSObj): 2
   elif t is void: 0
-  elif t is (int|int32|uint|uint32|bool): 1
+  elif t is (int|int32|uint|uint32|bool|enum|set): 1
+  else:
+    {.error: "Unexpected return type " & $t.}
 
 proc retTypeSig(t: typedesc, f, a: int): string =
   retTypeSig(retTypeR(t), f, a)
