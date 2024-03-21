@@ -1,4 +1,4 @@
-import macros, strutils
+import macros, strutils, unicode
 import wasmrt/minify
 
 macro exportwasm*(p: untyped): untyped =
@@ -7,6 +7,7 @@ macro exportwasm*(p: untyped): untyped =
   let name = $p.name
   let codegenPragma = "__attribute__ ((export_name (\"" & name & "\"))) $# $#$#"
   result.addPragma(newColonExpr(ident"codegenDecl", newLit(codegenPragma)))
+  result.addPragma(ident"exportc")
 
 proc stripSinkFromArgType(t: NimNode): NimNode =
   result = t
@@ -35,33 +36,17 @@ proc isNil*(o: JSObj): bool {.inline.} = o.o.isNil
 # A - 3 - 0 dont append args, 1 append args as call, 2 assign last arg
 
 # arg:
-# R - pass as is
-# o - convert to object
-# s - convert to string
+# 0 pass as is
+# 1 convert to object
+# 2 convert to string
+
+proc escapeCString(s: string): string =
+  for c in s:
+    result.add("\\")
+    result.add(c.toOctal())
 
 proc retTypeSig(r, f, a: int): string =
-  case (r * 100 + f * 10 + a)
-  of 000: "a"
-  of 001: "b"
-  of 002: "c"
-  of 010: "d"
-  of 011: "e"
-  of 012: "f"
-  of 100: "g"
-  of 101: "h"
-  of 102: "i"
-  of 110: "j"
-  of 111: "k"
-  of 112: "l"
-  of 200: "m"
-  of 201: "n"
-  of 202: "o"
-  of 210: "p"
-  of 211: "q"
-  of 212: "r"
-  else:
-    doAssert(false)
-    ""
+  escapeCString($Rune((r shl 3) or (f shl 2) or a))
 
 proc retTypeR(t: typedesc): int =
   when t is (JSRef|JSObj): 2
@@ -112,8 +97,17 @@ template toWasmType(t: typedesc): typedesc =
 
 var id {.compiletime.} = 1
 
-macro importwasmAux2(body: string, p: untyped, argSig: static[string]): untyped =
+macro importwasmAux2(body: string, p: untyped, argSig: static[string], numArgs: static[int]): untyped =
   expectKind(p, nnkProcDef)
+
+  # XXX: Patch argSig when no args and raw call. This is a quick hack,
+  # to be refactored.
+  var argSig = argSig
+  if numArgs == 0:
+    argSig = if argSig == "\\010\\003": "\\010\\000"
+             elif argSig == "\\020\\003": "\\020\\000"
+             elif argSig == "\\030\\003": "\\030\\000"
+             else: argSig
 
   let wrapper = newProc(procType = nnkTemplateDef)
   wrapper[0] = copyNimTree(p[0])
@@ -159,15 +153,28 @@ macro importwasmAux2(body: string, p: untyped, argSig: static[string]): untyped 
 
 proc joins(a: varargs[string]): string = a.join("")
 
-proc argSig(t: typedesc): string =
-  when t is (string|cstring): "s"
-  elif t is (JSRef|JSObj): "o"
-  else: "R"
+proc argSig(t: typedesc): int =
+  when t is (string|cstring): 2
+  elif t is (JSRef|JSObj): 1
+  else: 0
 
-proc numArgsSig(a: int): string {.compileTime.} =
-  const maxArgs = ord('}') - ord('0')
-  doAssert(a < maxArgs, "Number of arguments can not exceed " & $maxArgs)
-  $char(a + ord('0'))
+proc joinArgSig(args: varargs[int]): string =
+  var i = 0
+  var r = 0
+  var res = ""
+  for a in args:
+    r = r or (a shl (i * 2))
+    if i == 7:
+      res &= $Rune(r)
+      r = 0
+      i = 0
+    else:
+      inc i
+  r = r or (3 shl (i * 2))
+  res &= $Rune(r)
+  escapeCString(res)
+
+proc numArgsSig(a: int): string {.compileTime.} = escapeCString($Rune(a))
 
 proc importWasmAux(body: string, p: NimNode, raw, expr, prop, meth: bool): NimNode =
   p.expectKind(nnkProcDef)
@@ -184,10 +191,13 @@ proc importWasmAux(body: string, p: NimNode, raw, expr, prop, meth: bool): NimNo
     sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(0), newLit(0)), newLit(nas))
   else:
     let retType = p.params[0] or ident"void"
-    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(prop), newLit(meth), newLit(numArgs)), newLit(nas))
+    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(prop), newLit(meth), newLit(numArgs)))
+    let argSig = newCall(bindSym"joinArgSig")
+    sig.add(argSig)
+
     for _, _, t, _ in arguments(p.params):
-      sig.add(newCall(bindSym"argSig", t))
-  result = newCall(bindSym"importwasmAux2", newLit(body), p, sig)
+      argSig.add(newCall(bindSym"argSig", t))
+  result = newCall(bindSym"importwasmAux2", newLit(body), p, sig, newLit(numArgs))
 
 proc parseArgs(n: NimNode, v: NimNode): (NimNode, string) =
   if v.len == 0:
@@ -282,19 +292,22 @@ var W = WebAssembly, f = W.Module.imports(m), o = {}, g = globalThis, q, b;
 for (i of f) {
   var n = i.name;
   if (n[0] == '^') {
-    var r = n[1],
-    p = n.charCodeAt(2)-48,
+    var
+    c = a => n.charCodeAt(a),
+    r = c(1),
+    t = a => c(2+a/8|0)>>a%8*2&3,
+    b = r&7, // is not raw
     a='',
-    j = t => t.includes(r)|0,
-    b = n.substring(j('agm')?3:p+3),
-    w = (a, t) => t=='o'?`_nimo[${a}]`:t=='s'?`_nimsj(${a})`:a,
-    v = i => w('$' + i, n[i + 3]),
-    M = j('defjklpqr'), // Prepend first arg
-    O = j('mnopqr'); // Return obj
+    w = (a, t) => t&1?`_nimo[${a}]`:t&2?`_nimsj(${a})`:a,
+    v = i => w('$' + i, t(i)),
+    M = (r&4)/4, // Prepend first arg
+    p = c(2);
+    if (b) for (p=0;t(p)-3;++p);
+    b = n.substring(b?3+p/8|0:3); // Now b is the source code of the function
 
     for(I=0;I<p;++I)a+=(I?',$':'$')+I;
 
-    if (j('behknq')) { // have arguments
+    if (r & 1) { // have arguments
       b += '(';
       for (I = M; I < p; ++I)
         b += (I-M ? ',' : '') + v(I);
@@ -302,12 +315,13 @@ for (i of f) {
     }
     if (M)
       b = v(0) + '.' + b;
-    if (j('cfilor'))
+    if (r & 2)
       b += '=' + v(p-1);
-    if (O)
+    if (r & 16)
       b = `_nimok(${b})`;
-    if (O|j('ghijkl'))
+    if (r & 24)
       b = 'return ' + b;
+
     o[n] = new Function(a, b)
   }
   else
