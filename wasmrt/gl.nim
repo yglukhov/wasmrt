@@ -99,17 +99,17 @@ proc glVertexAttribPointerI(i: uint32, s: int32, t: uint32, n: bool, r: int32, o
 proc glVertexAttribPointer(i: uint32, s: int32, t: uint32, n: bool, r: int32, o: pointer) {.exportc.} =
   glVertexAttribPointerI(i, s, t, n, r, o)
 
-proc glUniformMatrix4fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix4fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima.buffer, $2, 16))".}
+proc glUniformMatrix4fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix4fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima, $2, 16))".}
 proc glUniformMatrix4fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix4")
   glUniformMatrix4fvI(l, t, v)
 
-proc glUniformMatrix3fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix3fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima.buffer, $2, 9))".}
+proc glUniformMatrix3fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix3fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima, $2, 9))".}
 proc glUniformMatrix3fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix3")
   glUniformMatrix3fvI(l, t, v)
 
-proc glUniformMatrix2fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix2fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima.buffer, $2, 4))".}
+proc glUniformMatrix2fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix2fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima, $2, 4))".}
 proc glUniformMatrix2fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix2")
   glUniformMatrix2fvI(l, t, v)
@@ -132,16 +132,16 @@ proc glUniform1f(l: uint32, v: float32) {.exportc.} = glUniform1fI(l, v)
 proc glUniform1iI(l: uint32, v: int32) {.importwasmraw: "GLCtx.uniform1i(_wrtglap._nimu[$0], $1)".}
 proc glUniform1i(l: uint32, v: int32) {.exportc.} = glUniform1iI(l, v)
 
-proc glUniform1fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform1fv(_wrtglap._nimu[$0], new Float32Array(_nima.buffer, $1, $2))".}
+proc glUniform1fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform1fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
 proc glUniform1fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform1fvI(l, v, c * 1)
 
-proc glUniform2fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform2fv(_wrtglap._nimu[$0], new Float32Array(_nima.buffer, $1, $2))".}
+proc glUniform2fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform2fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
 proc glUniform2fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform2fvI(l, v, c * 2)
 
-proc glUniform3fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform3fv(_wrtglap._nimu[$0], new Float32Array(_nima.buffer, $1, $2))".}
+proc glUniform3fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform3fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
 proc glUniform3fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform3fvI(l, v, c * 3)
 
-proc glUniform4fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform4fv(_wrtglap._nimu[$0], new Float32Array(_nima.buffer, $1, $2))".}
+proc glUniform4fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform4fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
 proc glUniform4fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform4fvI(l, v, c * 4)
 
 proc glDrawArraysI(m, f, c: uint32) {.importwasmf: "GLCtx.drawArrays".}
@@ -177,7 +177,7 @@ proc glBlendFunc(a, b: uint32) {.exportc.} = glBlendFuncI(a, b)
 proc glActiveTextureI(a: uint32) {.importwasmf: "GLCtx.activeTexture".}
 proc glActiveTexture(a: uint32) {.exportc.} = glActiveTextureI(a)
 
-proc glBufferDataI(t, s: uint32, d: pointer, u: uint32) {.importwasmraw: "GLCtx.bufferData($0, new DataView(_nima.buffer, $2, $1), $3)".}
+proc glBufferDataI(t, s: uint32, d: pointer, u: uint32) {.importwasmraw: "GLCtx.bufferData($0, new DataView(_nima, $2, $1), $3)".}
 proc glBufferData(t, s: uint32, d: pointer, u: uint32) {.exportc.} = glBufferDataI(t, s, d, u)
 
 proc glDrawElementsI(a, b, c, d: uint32) {.importwasmf: "GLCtx.drawElements".}
@@ -190,7 +190,7 @@ proc glPixelStoreiI(a, b: uint32) {.importwasmf: "GLCtx.pixelStorei".}
 proc glPixelStorei(a, b: uint32) {.exportc.} = glPixelStoreiI(a, b)
 
 proc glTexImage2DUint8I(t: uint32, l, i: int32, w, h, b: int32, f, k: uint32, s: int32, p: pointer) {.importwasmraw: """
-  GLCtx.texImage2D($0, $1, $2, $3, $4, $5, $6, $7, new Uint8Array(_nima.buffer, $9, $8))
+  GLCtx.texImage2D($0, $1, $2, $3, $4, $5, $6, $7, new Uint8Array(_nima, $9, $8))
   """.}
 import strutils
 
@@ -218,7 +218,7 @@ proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, b
     assert(false, "Unknown typ " & $format)
 
 proc glTexSubImage2DUint8I(t: uint32, l, x, y: int32, w, h: int32, f, k: uint32, s: int32, p: pointer) {.importwasmraw: """
-  GLCtx.texSubImage2D($0, $1, $2, $3, $4, $5, $6, $7, new Uint8Array(_nima.buffer, $9, $8))
+  GLCtx.texSubImage2D($0, $1, $2, $3, $4, $5, $6, $7, new Uint8Array(_nima, $9, $8))
   """.}
 
 proc glTexSubImage2D(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, data: pointer) {.exportc.} =

@@ -289,7 +289,7 @@ proc to*(o: sink JSObj, T: typedesc[JSObj]): T {.inline.} =
   T(o: r)
 
 const initCode = (""";
-var W = WebAssembly, f = W.Module.imports(m), o = {}, g = globalThis, q, b;
+var W = WebAssembly, f = W.Module.imports(m), o = {}, g = globalThis, q;
 for (i of f) {
   var n = i.name;
   if (n[0] == '^') {
@@ -341,22 +341,22 @@ g._nimoi = -1;
 g._nimok = o =>
   o ? ( _nimoi < 0 ? r = _nimo.length : _nimoi = _nimo[r = _nimoi], _nimo[r] = o, r ) : 0;
 
-g._nimmu = () => g._nima = b = new Int8Array(q.buffer);
+g._nimmu = () => g._nima = q.buffer;
 
 // function _nims(address, length): string
 // Create JS string from string at `address` with `length`
 g._nims = (a, l) =>
-  new TextDecoder().decode(new Uint8Array(q.buffer, a, l));
+  new TextDecoder().decode(new Uint8Array(_nima, a, l));
 
 // function _nimsj(address): string
 // Create JS string from null-terminated string at `address`
 g._nimsj = a =>
-  _nims(a, b.indexOf(0, a) - a);
+  _nims(a, new Int8Array(_nima).indexOf(0, a) - a);
 
 // function _nimws(string, address, length)
 // Write js string to buffer at `address` with `length`. The output is not null-terminated
 g._nimws = (s, a, l) =>
-  new TextEncoder().encodeInto(s, new Uint8Array(q.buffer, a, l)).written;
+  new TextEncoder().encodeInto(s, new Uint8Array(_nima, a, l)).written;
 
 // function _nimwi(int32Array, address)
 // Write `int32Array` at `address`
@@ -603,7 +603,7 @@ proc isNodejs(): bool {.inline.} =
   else:
     isNodejsAux()
 
-proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(_nims($1,$2))".}
+proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(new Uint8Array(_nima, $1, $2))".}
 
 proc consoleAppend(b: pointer, l: int) {.importwasmraw: "_nimc += _nims($0,$1)".}
 proc consoleFlush(s: int) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''".}
