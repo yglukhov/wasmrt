@@ -109,7 +109,8 @@ macro importwasmAux2(body: string, p: untyped, argSig: static[string], numArgs: 
              elif argSig == "\\030\\003": "\\030\\000"
              else: argSig
 
-  let wrapper = newProc(procType = nnkTemplateDef)
+  # XXX: The procType should better be nnkTemplate, but nnkProcDef is a workaround for nim bug #23440
+  let wrapper = newProc(procType = nnkProcDef)
   wrapper[0] = copyNimTree(p[0])
   wrapper.params = copyNimTree(p.params)
   let nameid = ident($p.name & "_nimwasmimport_" & $id)
@@ -337,46 +338,25 @@ g._nimoi = -1;
 
 // function _nimok(object): int
 // Store object in _nimo array, and return index to it, to be used from wasm
-g._nimok = o => {
-  if (!o) return 0;
-  var r;
-  if (_nimoi < 0)
-    r = _nimo.length;
-  else
-    _nimoi = _nimo[r = _nimoi];
-  _nimo[r] = o;
-  return r
-};
+g._nimok = o =>
+  o ? ( _nimoi < 0 ? r = _nimo.length : _nimoi = _nimo[r = _nimoi], _nimo[r] = o, r ) : 0;
 
 g._nimmu = () => g._nima = b = new Int8Array(q.buffer);
 
-// function _nimsj(address): string
-// Create JS string from null-terminated string at `address`
-g._nimsj = a => {
-  var s = '';
-  while (b[a]) s += String.fromCharCode(b[a++]);
-  return s
-};
-
 // function _nims(address, length): string
 // Create JS string from string at `address` with `length`
-g._nims = (a, l) => {
-  var s = '';
-  while (l--) s += String.fromCharCode(b[a++]);
-  return s
-};
+g._nims = (a, l) =>
+  new TextDecoder().decode(new Uint8Array(q.buffer, a, l));
+
+// function _nimsj(address): string
+// Create JS string from null-terminated string at `address`
+g._nimsj = a =>
+  _nims(a, b.indexOf(0, a) - a);
 
 // function _nimws(string, address, length)
 // Write js string to buffer at `address` with `length`. The output is not null-terminated
-g._nimws = (s, a, l) => {
-  var L = s.length;
-  L = L < l ? L : l;
-  if (L) {
-    var m = new Int8Array(q.buffer, a);
-    for (i = 0; i < L; ++i)
-      m[i] = s.charCodeAt(i)
-  }
-};
+g._nimws = (s, a, l) =>
+  new TextEncoder().encodeInto(s, new Uint8Array(q.buffer, a, l)).written;
 
 // function _nimwi(int32Array, address)
 // Write `int32Array` at `address`
