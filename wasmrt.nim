@@ -731,5 +731,13 @@ static:
     discard staticExec("mkdir " & nimcache)
   else:
     discard staticExec("mkdir -p " & nimcache)
-  discard staticExec(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/libm.a -x c -", input = "\n")
-  discard staticExec(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/librt.a -x c -", input = "\n")
+  let (o1, r1) = gorgeEx(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/libm.a -x c -", input = "\n")
+  if r1 != 0:
+    echo "Error compiling libm stub:"
+    echo o1
+    doAssert(false)
+  let (o2, r2) = gorgeEx(compilerPath & " -c --target=wasm32-unknown-unknown-wasm -o " & nimcache & "/librt.a -x c -", input = "\n")
+  if r2 != 0:
+    echo "Error compiling librt stub:"
+    echo o2
+    doAssert(false)
