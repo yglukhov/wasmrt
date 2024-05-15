@@ -608,7 +608,7 @@ proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0
 proc consoleAppend(b: pointer, l: int) {.importwasmraw: "_nimc += _nims($0,$1)".}
 proc consoleFlush(s: int) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''".}
 
-proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.} =
+proc fwriteImpl(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t =
   if cast[int](stream) in {0, 1}:
     # stdout
     let fzs = int(sz * nmemb)
@@ -616,8 +616,12 @@ proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.
       nodejsWriteToStream(cast[int](stream), p, fzs)
     else:
       consoleAppend(p, fzs)
+    return nmemb
   else:
-    consoleWarn("Attempted to write to wrong stream")
+    consoleWarn("fwrite wrong stream")
+
+proc fwrite(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.exportc.} =
+  fwriteImpl(p, sz, nmemb, stream)
 
 proc flockfile(f: pointer) {.exportc.} = discard
 proc funlockfile(f: pointer) {.exportc.} = discard
@@ -632,12 +636,11 @@ proc fflush(stream: pointer): cint {.exportc.} =
     consoleFlush(cast[int](stream))
 
 proc fputc(c: cint, stream: pointer): cint {.exportc.} =
-  if cast[int](stream) == 0:
-    var buf = cast[uint8](c)
-    if isNodejs():
-      nodejsWriteToStream(cast[int](stream), addr buf, 1)
+  var buf = cast[uint8](c)
+  if fwriteImpl(addr buf, sizeof(buf).csize_t, 1, stream) == 1:
+    c
   else:
-    consoleWarn "fputc called, ignoring"
+    -1
 
 proc munmap(a: pointer, len: csize_t): cint {.exportc.} =
   when not defined(release):
