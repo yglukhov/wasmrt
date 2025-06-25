@@ -177,6 +177,7 @@ proc action(ctx: var Ctx, determined: cint) =
               "Unterminated set in Regular Expression literal."
             );
           else: discard
+          break
 
         elif (ctx.the_a == '\\'):
           ctx.putc(ctx.the_a);
@@ -266,27 +267,6 @@ proc escapeJs*(s: string, escapeDollarWith = "$"): string {.compileTime.} =
     else: result.add(c)
 
 when isMainModule:
-  echo minifyJs("""function foo() {
-  // This is some comment
-  alert(" Hello this is a string!\\n ");
-  return a + b;
-  }
-
-  """)
-
-  echo minifyJs("""function foo() {
-  // This is some comment
-  alert(" Hello this is a string!\\n ");
-  return a +
-b
-;
-  }
-
-  """)
-
-  let r = minifyJs "function foo(){alert(\" Hello this is a string! \");return a+b;}"
-  echo r
-
   proc cmpStr(a, b: string) =
     var sz = min(a.len, b.len)
     for i in 0 ..< sz:
@@ -297,4 +277,34 @@ b
     if a.len > b.len:
       raise newException(ValueError, "Strings not equal. A is longer.")
 
-  cmpStr(r, "function foo(){alert(\" Hello this is a string! \");return a+b;}")
+  template t(a, b: string) =
+    # echo minifyJs(a)
+    cmpStr(minifyJs(a), b)
+
+  t("""function foo() {
+  // This is some comment
+  alert(" Hello this is a string!\\n ");
+  return a + b;
+  }
+
+""", """function foo(){alert(" Hello this is a string!\\n ");return a+b;}""")
+
+  t("""
+function foo() {
+  // This is some comment
+  alert(" Hello this is a string!\\n ");
+  return a +
+b
+;
+  }
+
+""", """function foo(){alert(" Hello this is a string!\\n ");return a+ b;}""")
+
+  t("function foo(){alert(\" Hello this is a string! \");return a+b;}",
+    "function foo(){alert(\" Hello this is a string! \");return a+b;}")
+
+  t("""
+const regex = /^\d+$/;
+const str = "12345";
+console.log(regex.test(str)); // true
+""", """const regex=/^\d+$/;const str="12345";console.log(regex.test(str));""")
