@@ -1,4 +1,4 @@
-# wasmrt [![Build Status](https://github.com/yglukhov/wasmrt/workflows/CI/badge.svg?branch=master)](https://github.com/yglukhov/wasmrt/actions?query=branch%3Amaster) [![nimble](https://img.shields.io/badge/nimble-black?logo=nim&style=flat&labelColor=171921&color=%23f3d400)](https://nimble.directory/pkg/wasmrt)
+# wasmrt [![CI](https://github.com/yglukhov/wasmrt/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/yglukhov/wasmrt/actions?query=branch%3Amaster) [![nimble](https://img.shields.io/badge/nimble-black?logo=nim&style=flat&labelColor=171921&color=%23f3d400)](https://nimble.directory/pkg/wasmrt)
 
 Compile nim to wasm
 ```nim
