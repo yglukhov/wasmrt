@@ -51,7 +51,7 @@ proc retTypeSig(r, f, a: int): string =
 proc retTypeR(t: typedesc): int =
   when t is (JSRef|JSObj): 2
   elif t is void: 0
-  elif t is (int|int32|uint|uint32|bool|enum|set): 1
+  elif t is (int|int32|uint|uint32|bool|enum|set|cfloat|float|cdouble|float32|float64): 1
   else:
     {.error: "Unexpected return type " & $t.}
 
@@ -130,6 +130,10 @@ macro importwasmAux2(body: string, p: untyped, argSig: static[string], numArgs: 
   let call = newCall(nameid)
   for _, n, _, _ in arguments(wrapper.params):
     call.add(newCall(bindSym"toWasm", n))
+
+  # Copy pragmas from def to wrapper
+  for pr in p[4]:
+    wrapper.addPragma(pr)
 
   # wrapper.addPragma(ident"inline")
   # wrapper.addPragma(newColonExpr(ident"stackTrace", ident"off"))
@@ -488,6 +492,14 @@ N_LIB_PRIVATE size_t strlen(const char* a) {
   return b - a - 1;
 }
 
+N_LIB_PRIVATE int strcmp(const char *s1, const char *s2) {
+  while (*s1 && (*s1 == *s2)) {
+    s1++;
+    s2++;
+  }
+  return *(unsigned char *)s1 - *(unsigned char *)s2;
+}
+
 N_LIB_PRIVATE char* strerror(int errnum) {
   return "strerror is not supported";
 }
@@ -496,7 +508,7 @@ N_LIB_PRIVATE int* __errno_location() {
   return &dummyErrno;
 }
 
-N_LIB_PRIVATE char* strstr(char *haystack, const char *needle) {
+N_LIB_PRIVATE char* strstr(const char *haystack, const char *needle) {
   if (haystack == NULL || needle == NULL) {
     return NULL;
   }
@@ -534,7 +546,7 @@ N_LIB_PRIVATE float fmodf(float x, float y) {
 
 """].}
 
-proc consoleWarn(a: cstring) {.importwasmf: "console.warn".}
+proc consoleWarn(a: cstring) {.importwasmf: "console.warn", enforceNoRaises.}
 
 proc logException(e: ref Exception) =
   consoleWarn("Exception in dynCall")
@@ -594,8 +606,8 @@ proc defineDyncall*(sig: static[string]) =
   var p = dyncall # Make sure nim doesn't dead-code-eliminate the generated func
   p = nil
 
-proc isNodejsAux(): bool {.importwasmp: "typeof process!='undefined'".}
-proc isNodejs(): bool {.inline.} =
+proc isNodejsAux(): bool {.importwasmp: "typeof process!='undefined'", enforceNoRaises.}
+proc isNodejs(): bool {.enforceNoRaises.} =
   when defined(wasmrtOnlyBrowser):
     false
   elif defined(wasmrtOnlyNode):
@@ -603,12 +615,12 @@ proc isNodejs(): bool {.inline.} =
   else:
     isNodejsAux()
 
-proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(new Uint8Array(_nima, $1, $2))".}
+proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(new Uint8Array(_nima, $1, $2))", enforceNoRaises.}
 
-proc consoleAppend(b: pointer, l: int) {.importwasmraw: "_nimc += _nims($0,$1)".}
-proc consoleFlush(s: int) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''".}
+proc consoleAppend(b: pointer, l: int) {.importwasmraw: "_nimc += _nims($0,$1)", enforceNoRaises.}
+proc consoleFlush(s: int) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''", enforceNoRaises.}
 
-proc fwriteImpl(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t =
+proc fwriteImpl(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.enforceNoRaises.} =
   if cast[int](stream) in {0, 1}:
     # stdout
     let fzs = int(sz * nmemb)
@@ -646,7 +658,7 @@ proc munmap(a: pointer, len: csize_t): cint {.exportc.} =
   when not defined(release):
     consoleWarn "munmap called, ignoring"
 
-proc dlopen(a: cstring): cint {.exportc.} =
+proc dlopen(a: cstring, f: cint): cint {.exportc.} =
   when defined(release):
     exit(-1)
   else:
@@ -670,7 +682,7 @@ proc jsMemIncreased() {.importwasmf: "_nimmu".}
 
 var memStart, totalMemory: uint
 
-proc wasmAlloc(block_size: uint): pointer {.inline.} =
+proc wasmAlloc(block_size: uint): pointer {.inline, enforceNoRaises.} =
   if totalMemory == 0:
     totalMemory = cast[uint](wasmMemorySize(0)) * wasmPageSize
     memStart = totalMemory
@@ -718,7 +730,7 @@ when compileOption("stackTrace"):
 when not defined(gcDestructors):
   GC_disable()
 
-import wasmrt/libc
+import wasmrt/[libc, printf]
 import std/compilesettings
 
 # Compiler and linker options
@@ -730,6 +742,9 @@ static:
   var compilerPath = querySetting(ccompilerPath)
   if compilerPath == "":
     compilerPath = "clang"
+  else:
+    compilerPath &= "/clang"
+
   when defined(windows):
     discard staticExec("mkdir " & nimcache)
   else:

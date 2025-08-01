@@ -20,3 +20,19 @@ proc clock_gettime(clkId: Clockid, tp: var Timespec): cint {.exportc.} =
   let t = gettimeImpl()
   tp.tv_sec = Time(t div 1000)
   tp.tv_nsec = (t mod 1000) * 1000
+
+proc atan2Aux(a, b: float): float {.importwasmf: "Math.atan2".}
+proc atan2(a, b: cdouble): cdouble {.exportc.} = atan2Aux(a, b)
+proc atan2f(a, b: cfloat): cfloat {.exportc.} = atan2Aux(a, b)
+
+proc cosAux(a: float): float {.importwasmf: "Math.cos".}
+proc cos(a: cdouble): cdouble {.exportc.} = cosAux(a)
+proc cosf(a: cfloat): cfloat {.exportc.} = cosAux(a)
+
+proc sinAux(a: float): float {.importwasmf: "Math.sin".}
+proc sin(a: cdouble): cdouble {.exportc.} = sinAux(a)
+proc sinf(a: cfloat): cfloat {.exportc.} = sinAux(a)
+
+proc powAux(a, b: float): float {.importwasmf: "Math.pow".}
+proc pow(a, b: cdouble): cdouble {.exportc.} = powAux(a, b)
+proc powf(a, b: cfloat): cfloat {.exportc.} = powAux(a, b)

@@ -190,7 +190,7 @@ proc glPixelStoreiI(a, b: uint32) {.importwasmf: "GLCtx.pixelStorei".}
 proc glPixelStorei(a, b: uint32) {.exportc.} = glPixelStoreiI(a, b)
 
 proc glTexImage2DUint8I(t: uint32, l, i: int32, w, h, b: int32, f, k: uint32, s: int32, p: pointer) {.importwasmraw: """
-  GLCtx.texImage2D($0, $1, $2, $3, $4, $5, $6, $7, new Uint8Array(_nima, $9, $8))
+  GLCtx.texImage2D($0, $1, $2, $3, $4, $5, $6, $7, $9?new Uint8Array(_nima, $9, $8):null);
   """.}
 import strutils
 
@@ -269,14 +269,14 @@ proc glGenRenderbuffers(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} 
 proc glBindRenderbufferI(a: uint32, b: JSRef) {.importwasmf: "GLCtx.bindRenderbuffer".}
 proc glBindRenderbuffer(a, b: uint32) {.exportc.} = glBindRenderbufferI(a, cast[JSRef](b))
 
-# proc glRenderbufferStorageI() {.importwasmraw: "".}
-# proc glRenderbufferStorage() {.exportc.} = glRenderbufferStorageI()
+proc glRenderbufferStorageI(a, b: uint32, c, d: int32) {.importwasmf: "GLCtx.renderbufferStorage".}
+proc glRenderbufferStorage(a, b: uint32, c, d: int32) {.exportc.} = glRenderbufferStorageI(a, b, c, d)
 
 proc glFramebufferRenderbufferI(a, b, c: uint32, d: JSRef) {.importwasmf: "GLCtx.framebufferRenderbuffer".}
 proc glFramebufferRenderbuffer(a, b, c, d: uint32) {.exportc.} = glFramebufferRenderbufferI(a, b, c, cast[JSRef](d))
 
-# proc glFramebufferTexture2DI() {.importwasmraw: "".}
-# proc glFramebufferTexture2D() {.exportc.} = glFramebufferTexture2DI()
+proc glFramebufferTexture2DI(a, b, c: uint32, d: JSRef, e: int32) {.importwasmf: "GLCtx.framebufferTexture2D".}
+proc glFramebufferTexture2D(a, b, c, d: uint32, e: int32) {.exportc.} = glFramebufferTexture2DI(a, b, c, cast[JSRef](d), e)
 
 proc glGetIntegervI(a: uint32, v: ptr int32) {.importwasmraw: """
   var o = GLCtx.getParameter($0);
@@ -284,7 +284,7 @@ proc glGetIntegervI(a: uint32, v: ptr int32) {.importwasmraw: """
   """.}
 proc glGetIntegerv(a: uint32, v: ptr int32) {.exportc.} = glGetIntegervI(a, v)
 
-proc glGetBooleanvI(a: uint32): int32 {.importwasmf: "!!GLCtx.getParam".}
+proc glGetBooleanvI(a: uint32): int32 {.importwasmf: "!!GLCtx.getParameter".}
 proc glGetBooleanv(a: uint32, v: ptr bool) {.exportc.} = v[] = glGetBooleanvI(a) != 0
 
 proc glGetFloatvI(a: uint32, v: ptr float32) {.importwasmraw: """

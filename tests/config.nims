@@ -1,5 +1,5 @@
 --os:linux
---cpu:i386
+--cpu:wasm32
 --threads:off
 --cc:clang
 --gc:orc
