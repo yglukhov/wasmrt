@@ -554,7 +554,7 @@ proc logException(e: ref Exception) =
   when compileOption("stackTrace"):
     consoleWarn($e.getStackTrace)
 
-template dyncallWrap(a: untyped) =
+template dyncallWrap(a: untyped): untyped =
   when defined(release):
     a
   else:
@@ -563,6 +563,8 @@ template dyncallWrap(a: untyped) =
     except Exception as e:
       logException(e)
       raise
+      when typeof(a) isnot void:
+        default(typeof(a))
 
 macro defDyncall(sig: static[string]): untyped =
   let callbackIdent = ident"callback"
