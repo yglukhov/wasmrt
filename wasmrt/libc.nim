@@ -36,3 +36,9 @@ proc sinf(a: cfloat): cfloat {.exportc.} = sinAux(a)
 proc powAux(a, b: float): float {.importwasmf: "Math.pow".}
 proc pow(a, b: cdouble): cdouble {.exportc.} = powAux(a, b)
 proc powf(a, b: cfloat): cfloat {.exportc.} = powAux(a, b)
+
+proc parseFloat(s: cstring): cdouble {.importwasmf.}
+
+proc strtod(s: cstring, endptr: ptr cstring): cdouble {.exportc.} =
+  assert(endptr == nil, "wasmrt.strtod doesn't support endptr argument")
+  parseFloat(s)
