@@ -18,8 +18,6 @@ let llTarget = "wasm32-unknown-unknown-wasm"
 switch("passC", "--target=" & llTarget)
 switch("passL", "--target=" & llTarget)
 
-switch("passC", "-I/usr/include") # Wouldn't compile without this :(
-
 switch("passC", "-flto") # Important for code size!
 
 # gc-sections seems to not have any effect

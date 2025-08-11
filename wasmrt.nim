@@ -1,4 +1,4 @@
-import macros, strutils, unicode
+import std/[macros, strutils, unicode, os]
 import wasmrt/minify
 
 macro exportwasm*(p: untyped): untyped =
@@ -703,7 +703,7 @@ proc wasmAlloc(block_size: uint): pointer {.inline, enforceNoRaises.} =
     totalMemory += wasmPagesToAllocate * wasmPageSize
     jsMemIncreased()
 
-proc mmap(a: pointer, len: csize_t, prot, flags, fildes: cint, off: int): pointer {.exportc.} =
+proc mmap(a: pointer, len: csize_t, prot, flags, fildes: cint, off: int64): pointer {.exportc.} =
   if unlikely a != nil:
     when not defined(release):
       consoleWarn("mmap called with wrong arguments")
@@ -761,3 +761,9 @@ static:
     echo "Error compiling librt stub:"
     echo o2
     doAssert(false)
+
+when not defined(wasmrtOverrideLibcIncludes):
+  const muslLibcPath = currentSourcePath().replace("\\", "/").parentDir() / "wasmrt/musl-libc/"
+  {.passC: "-I" & muslLibcPath & "wasmrt".}
+  {.passC: "-I" & muslLibcPath & "arch/generic".}
+  {.passC: "-I" & muslLibcPath & "include".}
