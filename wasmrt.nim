@@ -1,5 +1,7 @@
-import std/[macros, strutils, unicode, os]
+import std/[macros, strutils, os, tables]
 import wasmrt/minify
+
+const wasmrtImportModuleName {.strdefine.} = "env"
 
 macro exportwasm*(p: untyped): untyped =
   expectKind(p, nnkProcDef)
@@ -24,41 +26,65 @@ iterator arguments(formalParams: NimNode): tuple[idx: int, name, typ, default: N
       inc iParam
 
 type
-  JSRef* = ptr object
-  JSObj* {.inheritable.} = object
+  JSRef* = distinct pointer
+  JSObj* {.inheritable, pure.} = object
     o*: JSRef
+  JSString* = object of JSObj
+  JSExternRef* {.importc: "__externref_t", noinit.} = object
+  JSExternObj*[T] {.noinit.} = distinct JSExternRef
 
-proc isNil*(o: JSObj): bool {.inline.} = o.o.isNil
+type ExternRefTable {.importc.} = object
+var globalRefs {.codegendecl: "static __externref_t $2[0]".}: ExternRefTable
+proc wasmTableGrow(t: ExternRefTable, e: JSExternRef, by: cint): int32 {.importc: "__builtin_wasm_table_grow", nodecl.}
+proc wasmTableSet(t: ExternRefTable, i: cint, e: JSExternRef) {.importc: "__builtin_wasm_table_set", nodecl.}
+proc wasmTableGet(t: ExternRefTable, i: cint): JSExternRef {.importc: "__builtin_wasm_table_get", nodecl.}
 
+proc nullExternRef(): JSExternRef {.importc: "__builtin_wasm_ref_null_extern", nodecl.}
+# proc blabla(): JSExternRef {.importc, constructor: "blabla()".} =
+#   discard
+
+proc globalRefsTab(): int =
+  proc initGlobalRefsTab(): int =
+    wasmTableGrow(globalRefs, nullExternRef(), 1)
+  var g {.global.} = initGlobalRefsTab()
+  g
+
+var firstRef: int32 = -1
+var refs: array[64 * 1024 div sizeof(int32), int32] # Occupies 64KB
+
+proc storeRef(e: JSExternRef): int32 {.noinline.} =
+  discard globalRefsTab()
+  if firstRef < 0:
+    result = wasmTableGrow(globalRefs, e, 1) # returns previous size
+    refs[result + 1] = 1
+  else:
+    result = firstRef
+    firstRef = refs[result]
+    wasmTableSet(globalRefs, result, e)
+
+proc createJSRef(e: JSExternRef): JSRef {.inline.} =
+  cast[JSRef](storeRef(e))
+
+converter toJSExternRef*(e: JSRef): JSExternRef =
+  wasmTableGet(globalRefs, cast[int32](e))
 # Return type
-# R - 3 - 0 return void, 1 as is, 2 obj
-# F - 2 - 0 dont prepend first arg, 1 prepend
-# A - 3 - 0 dont append args, 1 append args as call, 2 assign last arg
+# 0IIIAARF
+# F - 1 - 0 dont prepend first arg, 1 prepend
+# R - 1 - 0 do nothing, 1 prepend "return"
+# A - 2 - 0 dont append args, 1 append args as call, 2 assign last arg
+# I - 3 - ID
 
-# arg:
-# 0 pass as is
-# 1 convert to object
-# 2 convert to string
-
-proc escapeCString(s: string): string =
-  for c in s:
-    result.add("\\")
-    result.add(c.toOctal())
-
-proc retTypeSig(r, f, a: int): string =
-  escapeCString($Rune((r shl 3) or (f shl 2) or a))
+proc retTypeSigA(r, f, a: int): int {.compileTime.} =
+  (a shl 2) or (r shl 1) or (f shl 0)
 
 proc retTypeR(t: typedesc): int =
-  when t is (JSRef|JSObj): 2
-  elif t is void: 0
-  elif t is (int|int32|uint|uint32|bool|enum|set|cfloat|float|cdouble|float32|float64): 1
-  else:
-    {.error: "Unexpected return type " & $t.}
+  when t is void: 0
+  else: 1
 
-proc retTypeSig(t: typedesc, f, a: int): string =
-  retTypeSig(retTypeR(t), f, a)
+proc retTypeSig(t: typedesc, f, a: int): int =
+  retTypeSigA(retTypeR(t), f, a)
 
-proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): string =
+proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): int =
   let r = retTypeR(t)
   var f = 0
   var a = 0
@@ -79,40 +105,94 @@ proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): string =
   else:
     f = 0
     a = 1
-  retTypeSig(r, f, a)
+  retTypeSigA(r, f, a)
 
-template toWasm[T](a: T): auto =
-  when a is string:
-    cstring(a)
-  elif a is JSObj:
-    a.o
-  else:
-    a
+template toWasm*(a: JSExternObj): auto = a
+template toWasm*(a: JSExternRef): JSExternRef = a
+template toWasm*(a: JSRef): JSExternRef = toJSExternRef(a)
+template toWasm*[T: JSObj](a: T): JSExternObj[T] = JSExternObj[T](toJSExternRef(a.o))
+template toWasm*(a: int|uint|int32|uint32|uint64|float32|float64|bool|pointer|ptr|enum|set): auto = a
+# template toWasm*(p: proc {.cdecl.}): pointer = cast[pointer](p)
+
+type
+  JSExternFuncRef* {.importc: "typeof(void (*__funcref)())".} = object
+
+template toWasm*(a: JSExternFuncRef): auto = a
 
 template toWasmType(t: typedesc): typedesc =
+  mixin toWasm
   when t is void:
     void
   else:
     typeof(toWasm(default(t)))
 
-var id {.compiletime.} = 1
+template toWasmWrapperType(t: typedesc): typedesc =
+  when t is void:
+    void
+  elif t is JSRef:
+    JSExternRef
+  elif t is JSObj:
+    JSExternObj[t]
+  else:
+    t
 
-macro importwasmAux2(body: string, p: untyped, argSig: static[string], numArgs: static[int]): untyped =
+template wasmTypeSig(t: typedesc): string =
+  when t is void: "v"
+  elif toWasmType(t) is int|uint|int8|uint8|int16|uint16|int32|uint32|pointer|bool|ptr|enum|set: "i32"
+  elif toWasmType(t) is int64|uint64: "i64"
+  elif toWasmType(t) is float32|cfloat: "f32"
+  elif toWasmType(t) is float64|float|cdouble: "f64"
+  elif toWasmType(t) is JSExternRef|JSExternObj: "r"
+  elif toWasmType(t) is JSExternFuncRef: "p"
+  else:
+    {.error: "Unexpected type: " & $t.}
+
+var id {.compiletime.} = 1
+type
+  WasmIdKey = object
+    body: string
+    funSig: int
+    numArgs: int
+
+var wasmIdTable {.compiletime.} = initTable[WasmIdKey, TableRef[string, int]]()
+
+proc genWasmId(body, typSig: string, funSig, numArgs: int): int =
+  let key = WasmIdKey(body: body, funSig: funSig, numArgs: numArgs)
+  var idTab = wasmIdTable.getOrDefault(key)
+  var wasmId = 0
+  if idTab.isNil:
+    idTab = newTable[string, int]()
+    idTab[typSig] = 0
+    wasmIdTable[key] = idTab
+  else:
+    result = idTab.getOrDefault(typSig, -1)
+    if result == -1:
+      result = idTab.len
+      doAssert(wasmId <= 16, "Too many wasm function overloads")
+      idTab[typSig] = result
+
+proc codegenDeclStr(rawBody: string): string =
+  # returns value for codegendecl pragma of an imported function with raw body `s` (including arg sig)
+  "__attribute__((import_module(\"" & wasmrtImportModuleName & "\"))) $# $#$# __asm__(\"^" & rawBody & "\")"
+
+macro importwasmAux2(body, typSig: static[string], p: untyped, funSig, numArgs: static[int]): untyped =
   expectKind(p, nnkProcDef)
 
-  # XXX: Patch argSig when no args and raw call. This is a quick hack,
-  # to be refactored.
-  var argSig = argSig
-  if numArgs == 0:
-    argSig = if argSig == "\\010\\003": "\\010\\000"
-             elif argSig == "\\020\\003": "\\020\\000"
-             elif argSig == "\\030\\003": "\\030\\000"
-             else: argSig
+  let body = escapeJs(body.minifyJs, "$$")
+  let wasmId = genWasmId(body, typSig, funSig, numArgs)
+  let funSig = (wasmId.uint shl 4) or funSig.uint
 
-  # XXX: The procType should better be nnkTemplate, but nnkProcDef is a workaround for nim bug #23440
+  let argSig = "\\" & toOctal(funSig.char) & "\\" & toOctal(numArgs.char)
+
   let wrapper = newProc(procType = nnkProcDef)
   wrapper[0] = copyNimTree(p[0])
-  wrapper.params = copyNimTree(p.params)
+  let parms = copyNimTree(p.params)
+  for i in 1 ..< parms.len:
+    parms[i][^2] = newCall(bindSym"toWasmWrapperType", parms[i][^2])
+
+  if parms[0].kind != nnkEmpty:
+    parms[0] = newCall(bindSym"toWasmWrapperType", parms[0])
+  wrapper.params = parms
   let nameid = ident($p.name & "_nimwasmimport_" & $id)
   inc id
   # echo treeRepr(p)
@@ -129,26 +209,23 @@ macro importwasmAux2(body: string, p: untyped, argSig: static[string], numArgs: 
 
   let call = newCall(nameid)
   for _, n, _, _ in arguments(wrapper.params):
-    call.add(newCall(bindSym"toWasm", n))
+    call.add(newCall("toWasm", n))
 
   # Copy pragmas from def to wrapper
   for pr in p[4]:
     wrapper.addPragma(pr)
 
-  # wrapper.addPragma(ident"inline")
-  # wrapper.addPragma(newColonExpr(ident"stackTrace", ident"off"))
+  wrapper.addPragma(ident"inline")
+  wrapper.addPragma(ident"enforceNoRaises")
+  wrapper.addPragma(newColonExpr(ident"stackTrace", ident"off"))
 
   p.addPragma(ident"importc")
+  p.addPragma(ident"enforceNoRaises")
   inc id
-  p.addPragma(newColonExpr(ident"codegenDecl", newLit("$# $#$# __asm__(\"^" & argSig & escapeJs(body.strVal.minifyJs, "$$") & "\")")))
+  p.addPragma(newColonExpr(ident"codegenDecl", newLit(codegenDeclStr(argSig & body))))
 
   wrapper.body = quote do:
-    when `retType` is void:
-      `call`
-    elif `retType` is JSObj:
-      `retType`(o: `call`)
-    else:
-      `call`
+    `call`
 
   result = quote do:
     `p`
@@ -158,51 +235,29 @@ macro importwasmAux2(body: string, p: untyped, argSig: static[string], numArgs: 
 
 proc joins(a: varargs[string]): string = a.join("")
 
-proc argSig(t: typedesc): int =
-  when t is (string|cstring): 2
-  elif t is (JSRef|JSObj): 1
-  else: 0
-
-proc joinArgSig(args: varargs[int]): string =
-  var i = 0
-  var r = 0
-  var res = ""
-  for a in args:
-    r = r or (a shl (i * 2))
-    if i == 7:
-      res &= $Rune(r)
-      r = 0
-      i = 0
-    else:
-      inc i
-  r = r or (3 shl (i * 2))
-  res &= $Rune(r)
-  escapeCString(res)
-
-proc numArgsSig(a: int): string {.compileTime.} = escapeCString($Rune(a))
-
 proc importWasmAux(body: string, p: NimNode, raw, expr, prop, meth: bool): NimNode =
   p.expectKind(nnkProcDef)
   var numArgs = 0
   for _, _, _, _ in p.params.arguments:
     inc numArgs
 
-  let nas = numArgsSig(numArgs)
-  var sig: NimNode
+  let retType = p.params[0] or ident"void"
+  var funSig: NimNode
   if raw:
-    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", newLit(0), newLit(0), newLit(0)), newLit(nas))
+    funSig = newLit(0)
   elif expr:
-    let retType = p.params[0] or ident"void"
-    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(0), newLit(0)), newLit(nas))
+    funSig = newCall(bindSym"retTypeSig", retType, newLit(0), newLit(0))
   else:
     let retType = p.params[0] or ident"void"
-    sig = newCall(bindSym"joins", newCall(bindSym"retTypeSig", retType, newLit(prop), newLit(meth), newLit(numArgs)))
-    let argSig = newCall(bindSym"joinArgSig")
-    sig.add(argSig)
+    funSig = newCall(bindSym"retTypeSig", retType, newLit(prop), newLit(meth), newLit(numArgs))
 
-    for _, _, t, _ in arguments(p.params):
-      argSig.add(newCall(bindSym"argSig", t))
-  result = newCall(bindSym"importwasmAux2", newLit(body), p, sig, newLit(numArgs))
+  let typSig = newCall(bindSym"joins", newCall(bindSym"wasmTypeSig", retType))
+  for _, _, typ, _ in p.params.arguments:
+    typSig.add(newCall(bindSym"wasmTypeSig", typ))
+
+
+  result = newCall(bindSym"importwasmAux2", newLit(body), typSig, p, funSig, newLit(numArgs))
+  # echo "RR: ", repr result
 
 proc parseArgs(n: NimNode, v: NimNode): (NimNode, string) =
   if v.len == 0:
@@ -238,49 +293,193 @@ macro importwasmf*(a1: untyped, more: varargs[untyped]): untyped =
   let (b, n) = parseArgs(a1, more)
   result = importWasmAux(n, b, false, false, false, false)
 
-macro importwasmraw*(name: string, b: untyped): untyped =
+macro importwasmraw*(name: static[string], b: untyped): untyped =
   # Import raw chunk of js code to wasm. It's usually better
   # to use `importwasmexpr` instead.
   # ```
   # proc myfunction(t: cstring) {.importwasmraw: """
   #   var d = document;
-  #   var e = d.getElementById(_nimsj($0));
-  #   return _nimok(e);
+  #   var e = d.getElementById($0);
+  #   return e
   #   """.}
   # ```
   # Refer to args with `$NUM`, NUM starting from 0.
-  # You can use JS helpers exposed by wasmrt, such as _nimo, _nimok, _nimsj, etc.
-  result = importWasmAux(name.strVal, b, true, false, false, false)
+  result = importWasmAux(name, b, true, false, false, false)
 
-macro importwasmexpr*(name: string, b: untyped): untyped =
+macro importwasmexpr*(name: static[string], b: untyped): untyped =
   # Import raw chunk of js code to wasm, but prepend corresponding return
   # directive in front of it, if necessary.
   # ```
   # proc myfunction(t: cstring): JSRef {.importwasmexpr: """
-  #   document.getElementById(_nimsj($0))
+  #   document.getElementById($0)
   #   """.}
   # ```
   # Refer to args with `$NUM`, NUM starting from 0.
-  # You can use JS helpers exposed by wasmrt, such as _nimo, _nimok, _nimsj, etc.
-  result = importWasmAux(name.strVal, b, false, true, false, false)
+  result = importWasmAux(name, b, false, true, false, false)
 
-proc copyAux(r: JSRef): uint32 {.importwasmf: "_nimok".}
-proc copy(r: JSRef): JSRef {.inline, stackTrace: off.} = cast[JSRef](copyAux(r))
+proc isNilJSShim(e: JSExternRef): bool {.importwasmexpr: "$0 == null".}
+proc isNil*(r: JSExternRef): bool {.stackTrace: off, enforceNoRaises.} =
+  {.emit: """
+  #if __has_builtin(__builtin_wasm_ref_is_null_extern)
+    `result` = __builtin_wasm_ref_is_null_extern(`r`);
+  #else
+    `result` = `isNilJSShim`(`r`);
+  #endif
+  """.}
 
-proc delete*(r: JSRef) {.importwasmraw: "_nimo[$0] = _nimoi; _nimoi = $0"}
+template `==`*(e: JSExternRef, n: typeof(nil)): bool = isNil(e)
+template `==`*(n: typeof(nil), e: JSExternRef): bool = isNil(e)
+
+proc isNil*(j: JSRef): bool {.inline, enforceNoRaises.} = toJSExternRef(j) == nil
+proc isNil*(o: JSObj): bool {.inline, enforceNoraises.} = o.o.isNil
+
+proc uint8MemSlice(s: pointer, length: uint32): JSRef {.importwasmexpr: "new Uint8Array(_nima, $0, $1)".}
+
+proc strToJs(m: JSRef): JSExternObj[JSString] {.importwasmf: "new TextDecoder().decode", enforceNoRaises.}
+
+proc strToJs*(s: pointer, length: uint32): JSExternObj[JSString] {.enforceNoRaises.} =
+  strToJs(uint8MemSlice(s, length))
+
+proc strLen(s: JSExternObj[JSString]): uint32 {.importwasmp: "length".}
+proc strWriteOut(s: JSExternObj[JSString], m: JSRef): uint32 {.importwasmexpr: """
+new TextEncoder().encodeInto($0, $1).written
+""".}
+
+proc strToJs(s: openarray[char]): JSExternObj[JSString] {.inline, enforceNoRaises.} =
+  let sz = s.len
+  strToJs(cast[pointer](addr s), sz.uint32)
+
+template toWasm*(a: string): JSExternObj[JSString] = strToJs(a)
+template toWasm*(a: cstring): JSExternObj[JSString] = strToJs(cast[pointer](a), a.len.uint32)
+
+template isNil*(o: JSExternObj): bool = isNil(JSExternRef(o))
+
+converter toString*(j: JSExternObj[JSString]): string =
+  if not JSExternRef(j).isNil:
+    var sz = strLen(j)
+    if sz != 0:
+      sz *= 3
+      result.setLen(sz)
+      sz = strWriteOut(j, uint8MemSlice(addr result[0], sz))
+      result.setLen(sz)
+
+proc `$`*(j: JSExternObj[JSString]): string {.inline.} = toString(j)
+
+converter toJSExternObj*(a: string): JSExternObj[JSString] {.enforceNoRaises.} = strToJs(a)
+converter toJSExternObj*(a: cstring): JSExternObj[JSString] {.enforceNoRaises.} = strToJs(cast[pointer](a), a.len.uint32)
+# converter toJSExternObj*[T, Y](a: JSExternObj[T]): JSExternObj[Y] {.enforceNoRaises.} = JSExternObj[Y](a)
+
+
+proc `==`*(e: JSExternObj, n: typeof(nil)): bool {.inline, enforceNoRaises.} = isNil(e)
+proc `==`*(n: typeof(nil), e: JSExternObj): bool {.inline, enforceNoRaises.} = isNil(e)
+
+
+converter toJSRef*(e: JSExternRef): JSRef =
+  createJSRef(e)
+
+converter toJSExternObj*[T: JSObj](o: T): JSExternObj[T] =
+  JSExternObj[T](wasmTableGet(globalRefs, cast[int32](o.o)))
+
+converter toJSObj*[T: JSObj](e: JSExternObj[T]): T =
+  T(o: cast[JSRef](storeRef(JSExternRef(e))))
+
+proc toFuncExternRef(p: pointer): JSExternFuncRef {.importc, codegendecl: codegenDeclStr("\\06\\01_nimm.exports.__indirect_function_table.get").}
+
+proc argNameForIdx(i: int): string =
+  # generate a stable short arg name, unique for i
+  # Returns "a" for 0, "b" for 1, and so on...
+  const alphabetSize = ord('z') - ord('a')
+  if i < alphabetSize:
+    return $(char(ord('a') + i))
+  elif i < alphabetSize * 2:
+    return $(char(ord('A') + i - alphabetSize))
+  else:
+    doAssert(false, "too many args is not implemented")
+
+var closurizeId {.compileTime.} = 0
+macro closurizeFunction(p: typed, funcPtr, env: typed): untyped =
+  let t = getTypeInst(p)
+  var argcount = 0
+  for a in arguments(t.params):
+    inc argCount
+  
+  var decl = ""
+  if argCount == 1:
+    decl &= argNameForIdx(0)
+  else:
+    decl &= "("
+    for i in 0 ..< argCount:
+      if i != 0:
+        decl &= ","
+      decl &= argNameForIdx(i)
+    decl &= ")"
+  decl &= "=>$$0("
+  for i in 0 ..< argCount:
+    if i != 0:
+      decl &= ","
+    decl &= argNameForIdx(i)
+  if argCount > 0:
+    decl &= ","
+  decl &= "$$1)"
+  
+  let prcId = ident("wasmrtClosurize" & $closurizeId)
+  inc closurizeId
+  let codeDecl = codegenDeclStr("\\02\\02" & decl)
+  let s = genSym(nskProc, "closurize")
+  result = quote do:
+    proc `prcId`(p: JSExternFuncRef, e: pointer): JSExternRef {.importc, codegenDecl: `codeDecl`.}
+    `prcId`(`funcPtr`, `env`)
+
+proc identity(p: JSExternFuncRef): JSExternRef {.importc, codegenDecl: codegenDeclStr("\\02\\01$$0").}
+proc toClosureFuncExternRef(p: proc{.closure.}): JSExternRef =
+  # defineClosurizeFunction(p)
+  let rp = rawProc(p)
+  if rp == nil:
+    nullExternRef()
+  else:
+    let ep = toFuncExternRef(rp)
+    let e = rawEnv(p)
+    if e == nil:
+      identity(ep)
+    else:
+      closurizeFunction(p, ep, e)
+
+template toWasm*(p: proc{.cdecl.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
+template toWasm*(p: proc{.closure.}): JSExternRef = toClosureFuncExternRef(p)
+template toWasm*(a: JSString): JSExternObj[JSString] = JSExternObj[JSString](toJSExternRef(a.o))
+
+proc retain*(r: JSRef) =
+  let idx = cast[int32](r)
+  inc refs[idx]
+
+proc release*(r: JSRef) {.noinline.} =
+  let idx = cast[int32](r)
+  var cnt = refs[idx]
+  dec cnt
+  if cnt == 0:
+    refs[idx] = firstRef
+    firstRef = idx
+    wasmTableSet(globalRefs, idx, nullExternRef())
+  else:
+    refs[idx] = cnt
+
+proc delete*(r: JSRef) =
+  release(r)
 
 proc `=copy`*(a: var JSObj, b: JSObj) =
-  if a.o != nil:
-    delete(a.o)
-  if b.o.isNil:
-    a.o = nil
-  else:
-    a.o = copy(b.o)
+  retain(b.o)
+  release(a.o)
+  a.o = b.o
 
 proc `=destroy`*(a: var JSObj) =
-  if a.o != nil:
-    delete(a.o)
-    a.o = nil
+  release(a.o)
+  a.o = JSRef(nil)
+
+converter toJSExternRef*(e: JSObj): JSExternRef {.inline.} = toJSExternRef(e.o)
+
+converter toJSObj*(e: JSExternRef): JSObj =
+  if e.isNil: return JSObj()
+  JSObj(o: createJSRef(e))
 
 when not defined(release):
   proc nimerr() {.exportwasm.} =
@@ -292,89 +491,59 @@ proc to*(o: sink JSObj, T: typedesc[JSObj]): T {.inline.} =
   wasMoved(o)
   T(o: r)
 
+template to*[From](o: JSExternObj[From], T: typedesc[JSObj]): auto = JSExternObj[T](o)
+
 const initCode = (""";
-var W = WebAssembly, f = W.Module.imports(m), o = {}, g = globalThis, q;
-for (i of f) {
-  var n = i.name;
-  if (n[0] == '^') {
+var W = WebAssembly, o = {}, g = globalThis, q='';
+for (i of W.Module.imports(m)) {
+  var n = i.name,
+    c = a => n.charCodeAt(a);
+
+  if (c(0) == 94) { // First char equals '^'
     var
-    c = a => n.charCodeAt(a),
-    r = c(1),
-    t = a => c(2+a/8|0)>>a%8*2&3,
-    b = r&7, // is not raw
-    a='',
-    w = (a, t) => t&1?`_nimo[${a}]`:t&2?`_nimsj(${a})`:a,
-    v = i => w('$' + i, t(i)),
-    M = (r&4)/4, // Prepend first arg
-    p = c(2);
-    if (b) for (p=0;t(p)-3;++p);
-    b = n.substring(b?3+p/8|0:3); // Now b is the source code of the function
+    r = c(1), // Fun sig
+    a = q,
+    F = r & 1, // Prepend first arg
+    p = c(2), // Number of arguments
+    b = n.substring(3); // Source code of the function
 
-    for(I=0;I<p;++I)a+=(I?',$':'$')+I;
+    for (I=0; I<p; ++I) a+= '$' + I + ',';
 
-    if (r & 1) { // have arguments
+    if (r & 4) { // have arguments
       b += '(';
-      for (I = M; I < p; ++I)
-        b += (I-M ? ',' : '') + v(I);
+      for (I = F; I < p; ++I)
+        b += '$' + I + ',';
       b += ')'
     }
-    if (M)
-      b = v(0) + '.' + b;
-    if (r & 2)
-      b += '=' + v(p-1);
-    if (r & 16)
-      b = `_nimok(${b})`;
-    if (r & 24)
-      b = 'return ' + b;
 
-    o[n] = new Function(a, b)
+    // console.log("BODY",
+      // (r&2?'return ':q) + // Prepend return
+      // (F?'$0.':q) + // Prepend first arg dot
+      // b + // The source code
+      // (r&8?'=$' + (p-1):q) // Append assignment to last arg
+    // );
+
+
+
+    o[n] = new Function(a,
+      (r&2?'return ':q) + // Prepend return
+      (F?'$0.':q) + // Prepend first arg dot
+      b + // The source code
+      (r&8?'=$' + (p-1):q) // Append assignment to last arg
+    )
   }
   else
-    console.warn("Undefined external symbol: ", n),
-""" & (if not defined(release): """o[n] = new Function('', 'console.error("Undefined symbol called: ' + n + '"); _nime.nimerr()');"""
-      else: """o[n] = new Function('', 'throw new Error("Undefined symbol called: ' + n + '")');""") &
+    console.warn('Undefined external symbol: ', n),
+""" & (if not defined(release): """o[n] = new Function(q, 'console.error("Undefined symbol called: ' + n + '"); _nime.nimerr()')"""
+      else: "o[n] = new Function(q, `throw new Error('Undefined symbol called: ${n}')`)") &
 """
 }
 
-g._nimc = '';
-g._nimo = [null];
-g._nimoi = -1;
-
-// function _nimok(object): int
-// Store object in _nimo array, and return index to it, to be used from wasm
-g._nimok = o =>
-  o ? ( _nimoi < 0 ? r = _nimo.length : _nimoi = _nimo[r = _nimoi], _nimo[r] = o, r ) : 0;
+g._nimc = q;
 
 g._nimmu = () => g._nima = q.buffer;
 
-// function _nims(address, length): string
-// Create JS string from string at `address` with `length`
-g._nims = (a, l) =>
-  new TextDecoder().decode(new Uint8Array(_nima, a, l));
-
-// function _nimsj(address): string
-// Create JS string from null-terminated string at `address`
-g._nimsj = a =>
-  _nims(a, new Int8Array(_nima).indexOf(0, a) - a);
-
-// function _nimws(string, address, length)
-// Write js string to buffer at `address` with `length`. The output is not null-terminated
-g._nimws = (s, a, l) =>
-  new TextEncoder().encodeInto(s, new Uint8Array(_nima, a, l)).written;
-
-// function _nimwi(int32Array, address)
-// Write `int32Array` at `address`
-g._nimwi = (v, a) => new Int32Array(q.buffer, a).set(v);
-
-// function _nimwf(float32Array, address)
-// Write `float32Array` at `address`
-g._nimwf = (v, a) => new Float32Array(q.buffer, a).set(v);
-
-// function _nimwd(float64Array, address)
-// Write `float64Array` at `address`
-g._nimwd = (v, a) => new Float64Array(q.buffer, a).set(v);
-
-W.instantiate(m, {env: o}).then(m => {
+W.instantiate(m, {""" & wasmrtImportModuleName & """: o}).then(m => {
   g._nimm = m;
   n = g._nime = m.exports;
   q = n.memory;
@@ -384,231 +553,15 @@ W.instantiate(m, {env: o}).then(m => {
 """).minifyJs().escapeJs()
 
 {.emit: ["""
-int stdout = 0;
-int stderr = 1;
-static int dummyErrno = 0;
-
 void __nimWasmInit() __attribute__((export_name(""" & '"' & initCode & """"))) {
   void NimMain();
   NimMain();
 }
-
-N_LIB_PRIVATE void* memcpy(void* a, const void* b, size_t s) {
-  char* aa = (char*)a;
-  char* bb = (char*)b;
-  while(s) {
-    --s;
-    *aa = *bb;
-    ++aa;
-    ++bb;
-  }
-  return a;
-}
-
-N_LIB_PRIVATE void* memmove(void *dest, const void *src, size_t len) { /* Copied from https://code.woboq.org/gcc/libgcc/memmove.c.html */
-  char *d = dest;
-  const char *s = src;
-  if (d < s)
-    while (len--)
-      *d++ = *s++;
-  else {
-    char *lasts = s + (len-1);
-    char *lastd = d + (len-1);
-    while (len--)
-      *lastd-- = *lasts--;
-  }
-  return dest;
-}
-
-N_LIB_PRIVATE void* memchr(register const void* src_void, int c, size_t length) { /* Copied from https://code.woboq.org/gcc/libiberty/memchr.c.html */
-  const unsigned char *src = (const unsigned char *)src_void;
-
-  while (length-- > 0) {
-    if (*src == c)
-     return (void*)src;
-    src++;
-  }
-  return NULL;
-}
-
-N_LIB_PRIVATE int memcmp(const void* a, const void* b, size_t s) {
-  char* aa = (char*)a;
-  char* bb = (char*)b;
-  if (aa == bb) return 0;
-
-  while(s) {
-    --s;
-    int ia = *aa;
-    int ib = *bb;
-    int r = ia - ib; // TODO: The result might be inverted. Verify against C standard.
-    if (r) return r;
-    *aa = *bb;
-    ++aa;
-    ++bb;
-  }
-  return 0;
-}
-
-N_LIB_PRIVATE void* memmem(const void *l, size_t l_len, const void *s, size_t s_len) {
-  register char *cur, *last;
-  const char *cl = (const char *)l;
-  const char *cs = (const char *)s;
-
-  /* we need something to compare */
-  if (l_len == 0 || s_len == 0)
-    return NULL;
-
-  /* "s" must be smaller or equal to "l" */
-  if (l_len < s_len)
-    return NULL;
-
-  /* special case where s_len == 1 */
-  if (s_len == 1)
-    return memchr(l, (int)*cs, l_len);
-
-  /* the last position where its possible to find "s" in "l" */
-  last = (char *)cl + l_len - s_len;
-
-  for (cur = (char *)cl; cur <= last; cur++)
-    if (cur[0] == cs[0] && memcmp(cur, cs, s_len) == 0)
-      return cur;
-
-  return NULL;
-}
-
-N_LIB_PRIVATE void* memset(void* a, int b, size_t s) {
-  char* aa = (char*)a;
-  while(s) {
-    --s;
-    *aa = b;
-    ++aa;
-  }
-  return a;
-}
-
-N_LIB_PRIVATE size_t strlen(const char* a) {
-  const char* b = a;
-  while (*b++);
-  return b - a - 1;
-}
-
-N_LIB_PRIVATE int strcmp(const char *s1, const char *s2) {
-  while (*s1 && (*s1 == *s2)) {
-    s1++;
-    s2++;
-  }
-  return *(unsigned char *)s1 - *(unsigned char *)s2;
-}
-
-N_LIB_PRIVATE char* strerror(int errnum) {
-  return "strerror is not supported";
-}
-
-N_LIB_PRIVATE int* __errno_location() {
-  return &dummyErrno;
-}
-
-N_LIB_PRIVATE char* strstr(const char *haystack, const char *needle) {
-  if (haystack == NULL || needle == NULL) {
-    return NULL;
-  }
-
-  for ( ; *haystack; haystack++) {
-    // Is the needle at this point in the haystack?
-    const char *h, *n;
-    for (h = haystack, n = needle; *h && *n && (*h == *n); ++h, ++n) {
-      // Match is progressing
-    }
-    if (*n == '\0') {
-      // Found match!
-      return haystack;
-    }
-    // Didn't match here.  Try again further along haystack.
-  }
-  return NULL;
-}
-
-N_LIB_PRIVATE double trunc(double x) {
-  if (x >= 0.0) {
-    return (double)((int)x);
-  } else {
-    return -((double)((int)-x));
-  }
-}
-
-N_LIB_PRIVATE double fmod(double x, double y) {
-  return x - trunc(x / y) * y;
-}
-
-N_LIB_PRIVATE float fmodf(float x, float y) {
-  return fmod(x, y);
-}
-
 """].}
 
-proc consoleWarn(a: cstring) {.importwasmf: "console.warn", enforceNoRaises.}
+proc consoleWarn(a: JSString) {.importwasmf: "console.warn".}
 
-proc logException(e: ref Exception) =
-  consoleWarn("Exception in dynCall")
-  consoleWarn(e.msg)
-  when compileOption("stackTrace"):
-    consoleWarn($e.getStackTrace)
-
-template dyncallWrap(a: untyped): untyped =
-  when defined(release):
-    a
-  else:
-    try:
-      a
-    except Exception as e:
-      logException(e)
-      raise
-      when typeof(a) isnot void:
-        default(typeof(a))
-
-macro defDyncall(sig: static[string]): untyped =
-  let callbackIdent = ident"callback"
-  let callbackParams = newTree(nnkFormalParams)
-  let callbackCall = newCall(callbackIdent)
-
-  var params: seq[NimNode]
-  for i, c in sig:
-    let t = case c
-      of 'v': ident"void"
-      of 'i': ident"cint"
-      of 'd': ident"cdouble"
-      else: raise newException(AssertionDefect, "Unexpected signature: " & $c)
-
-    if i == 0:
-      params.add(t)
-      callbackParams.add(t)
-    else:
-      let id = ident("arg" & $i)
-      params.add(newIdentDefs(id, t))
-      callbackParams.add(newIdentDefs(id, t))
-      callbackCall.add(id)
-
-  let callbackTy = newTree(nnkProcTy, callbackParams, newEmptyNode())
-  callbackTy.addPragma(ident"cdecl")
-  params.insert(newIdentDefs(callbackIdent, callbackTy), 1)
-
-  let wrappedCall = newCall(bindSym"dyncallWrap", callbackCall)
-  result = newProc(ident("dyncall"), params, wrappedCall)
-  let codegenPragma = "__attribute__ ((export_name (\"" & "_d" & sig & "\"))) $# $#$#"
-  result.addPragma(newColonExpr(ident"codegenDecl", newLit(codegenPragma)))
-  # echo repr result
-
-proc defineDyncall*(sig: static[string]) =
-  ## Call this function to make sure that the resulting wasm exposes
-  ## _dsig function to make dynamic calls by function address.
-  ## Calling this function with the same arguments more than once is a
-  ## noop.
-  defDyncall(sig)
-  mixin dyncall
-  var p = dyncall # Make sure nim doesn't dead-code-eliminate the generated func
-  p = nil
-
-proc isNodejsAux(): bool {.importwasmp: "typeof process!='undefined'", enforceNoRaises.}
+proc isNodejsAux(): bool {.importwasmp: "typeof process!='undefined'".}
 proc isNodejs(): bool {.enforceNoRaises.} =
   when defined(wasmrtOnlyBrowser):
     false
@@ -617,19 +570,19 @@ proc isNodejs(): bool {.enforceNoRaises.} =
   else:
     isNodejsAux()
 
-proc nodejsWriteToStream(s: int, b: pointer, l: int) {.importwasmraw:"process[$0?'stderr':'stdout'].write(new Uint8Array(_nima, $1, $2))", enforceNoRaises.}
+proc nodejsWriteToStream(s: int32, byteArray: JSRef) {.importwasmraw:"process[$0?'stderr':'stdout'].write($1)".}
 
-proc consoleAppend(b: pointer, l: int) {.importwasmraw: "_nimc += _nims($0,$1)", enforceNoRaises.}
-proc consoleFlush(s: int) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''", enforceNoRaises.}
+proc consoleAppend(s: JSString) {.importwasmraw: "_nimc += $0".}
+proc consoleFlush(s: int32) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''".}
 
 proc fwriteImpl(p: pointer, sz, nmemb: csize_t, stream: pointer): csize_t {.enforceNoRaises.} =
-  if cast[int](stream) in {0, 1}:
+  if cast[int32](stream) in {0, 1}:
     # stdout
-    let fzs = int(sz * nmemb)
+    let fzs = uint32(sz * nmemb)
     if isNodejs():
-      nodejsWriteToStream(cast[int](stream), p, fzs)
+      nodejsWriteToStream(cast[int32](stream), uint8MemSlice(p, fzs))
     else:
-      consoleAppend(p, fzs)
+      consoleAppend(strToJs(p, fzs))
     return nmemb
   else:
     consoleWarn("fwrite wrong stream")
@@ -646,8 +599,8 @@ proc exit(code: cint) {.exportc.} =
     consoleWarn "exit called, ignoring"
 
 proc fflush(stream: pointer): cint {.exportc.} =
-  if cast[int](stream) in {0, 1} and not isNodejs():
-    consoleFlush(cast[int](stream))
+  if cast[int32](stream) in {0, 1} and not isNodejs():
+    consoleFlush(cast[int32](stream))
 
 proc fputc(c: cint, stream: pointer): cint {.exportc.} =
   var buf = cast[uint8](c)
@@ -664,7 +617,8 @@ proc dlopen(a: cstring, f: cint): cint {.exportc.} =
   when defined(release):
     exit(-1)
   else:
-    echo "dlopen(", a, ")"
+    consoleWarn("dlopen called for:")
+    consoleWarn(a)
     nimerr()
 
 const wasmPageSize = 64 * 1024
@@ -734,6 +688,9 @@ when not defined(gcDestructors):
 
 import wasmrt/[libc, printf]
 import std/compilesettings
+
+# This is required to export function table __indirect_function_table.
+{.passL:"-Wl,--export-table".}
 
 # Compiler and linker options
 static:
