@@ -3,7 +3,7 @@
 Compile nim to wasm
 ```nim
 import wasmrt
-proc consoleLog(a: cstring) {.importwasmraw: "console.log(_nimsj($0))".}
+proc consoleLog(a: string) {.importwasmraw: "console.log($0)".}
 consoleLog("Hello, world!")
 ```
 
@@ -13,7 +13,7 @@ node tests/runwasm.js test.wasm
 ```
 
 # Prerequisites
-- clang 8.0 or later
+- clang 20.0 or later
 - Special Nim config, like [this one](https://github.com/yglukhov/wasmrt/blob/master/tests/config.nims)
 - [Optional] [wasm-opt](https://github.com/WebAssembly/binaryen) - a tool to compact your wasm file
 
