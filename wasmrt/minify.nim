@@ -202,7 +202,7 @@ proc jsminAux(ctx: var Ctx) =
     discard ctx.get();
     discard ctx.get();
 
-  ctx.the_a = ctx.get();
+  ctx.the_a = '\n'.ord;
   ctx.action(3);
   while (ctx.the_a != EOF):
     case (ctx.the_a)
@@ -308,3 +308,5 @@ const regex = /^\d+$/;
 const str = "12345";
 console.log(regex.test(str)); // true
 """, """const regex=/^\d+$/;const str="12345";console.log(regex.test(str));""")
+
+  t("'BLA'", "'BLA'")
