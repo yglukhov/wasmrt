@@ -229,7 +229,7 @@ proc jsminAux(ctx: var Ctx) =
       of '\n':
         case ctx.the_a.char
         of '}', ']', ')', '+', '-', '"', '\'', '`':
-          ctx.action(1);
+          ctx.action(3);
         else:
           ctx.action(
             if is_alphanum(ctx.the_a): 1 else: 3
@@ -298,7 +298,7 @@ b
 ;
   }
 
-""", """function foo(){alert(" Hello this is a string!\\n ");return a+ b;}""")
+""", """function foo(){alert(" Hello this is a string!\\n ");return a+b;}""")
 
   t("function foo(){alert(\" Hello this is a string! \");return a+b;}",
     "function foo(){alert(\" Hello this is a string! \");return a+b;}")
@@ -310,3 +310,7 @@ console.log(regex.test(str)); // true
 """, """const regex=/^\d+$/;const str="12345";console.log(regex.test(str));""")
 
   t("'BLA'", "'BLA'")
+  t("""o =
+    b(a,
+      1 +
+      2)""", "o=b(a,1+2)")
