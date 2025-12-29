@@ -30,8 +30,26 @@ type
   JSObj* {.inheritable, pure.} = object
     o*: JSRef
   JSString* = object of JSObj
-  JSExternRef* {.importc: "__externref_t", noinit.} = object
-  JSExternObj*[T] {.noinit.} = distinct JSExternRef
+  JSExternObjBase {.inheritable, pure, noinit, importc: "__externref_t", bycopy.} = object
+
+  JSExternRef* = JSExternObjBase
+
+macro parent(t: typedesc): untyped =
+  let n = t.getType()[1]
+  if sameType(n, bindSym"JSObj"):
+    return bindSym"JSExternRef"
+  else:
+    let imp = n.getTypeImpl()
+    imp.expectKind(nnkObjectTy)
+    let base = imp[1][0]
+    result = newTree(nnkObjectTy,
+                    newEmptyNode(),
+                    newTree(nnkOfInherit,
+                            newTree(nnkBracketExpr, ident"JSExternObj", base)),
+                    newEmptyNode())
+
+type
+  JSExternObj*[T] {.noinit, importc: "__externref_t", bycopy.} = parent(T)
 
 type ExternRefTable {.importc.} = object
 var globalRefs {.codegendecl: "static __externref_t $2[0]".}: ExternRefTable
@@ -40,8 +58,6 @@ proc wasmTableSet(t: ExternRefTable, i: cint, e: JSExternRef) {.importc: "__buil
 proc wasmTableGet(t: ExternRefTable, i: cint): JSExternRef {.importc: "__builtin_wasm_table_get", nodecl.}
 
 proc nullExternRef(): JSExternRef {.importc: "__builtin_wasm_ref_null_extern", nodecl.}
-# proc blabla(): JSExternRef {.importc, constructor: "blabla()".} =
-#   discard
 
 proc globalRefsTab(): int =
   proc initGlobalRefsTab(): int =
@@ -132,7 +148,7 @@ template toWasmWrapperType(t: typedesc): typedesc =
   elif t is JSRef:
     JSExternRef
   elif t is JSObj:
-    JSExternObj[t]
+    JSExternObj[t] | t
   else:
     t
 
@@ -377,10 +393,13 @@ proc `==`*(n: typeof(nil), e: JSExternObj): bool {.inline, enforceNoRaises.} = i
 converter toJSRef*(e: JSExternRef): JSRef =
   createJSRef(e)
 
-converter toJSExternObj*[T: JSObj](o: T): JSExternObj[T] =
+converter toJSExternObj*[T: JSObj](o: T): JSExternObj[T] {.inline.} =
   JSExternObj[T](wasmTableGet(globalRefs, cast[int32](o.o)))
 
-converter toJSObj*[T: JSObj](e: JSExternObj[T]): T =
+converter toJSObj*[T: JSObj](e: JSExternObj[T]): T {.inline.} =
+  T(o: cast[JSRef](storeRef(JSExternRef(e))))
+
+proc to*[T: JSObj, F](e: JSExternObj[F]): T {.inline.} =
   T(o: cast[JSRef](storeRef(JSExternRef(e))))
 
 proc toFuncExternRef(p: pointer): JSExternFuncRef {.importc, codegendecl: codegenDeclStr("\\06\\01_nimm.exports.__indirect_function_table.get").}

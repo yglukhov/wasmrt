@@ -58,13 +58,21 @@ block:
   doAssert(myJSObject().someFunc(1, 2) == 3)
   myJSObject().someProp = "hi"
   doAssert(myJSObject().someProp == "hi")
+
+  proc foo() =
+    let j = myJSObject()
+    doAssert(j.someProp == "hi")
+    let jo: JSObj = myJSObject()
+    doAssert(jo.someProp == "hi")
+  foo()
+
 block:
   proc getNull(): JSObj {.importwasmexpr: "null".}
   doAssert(getNull() == nil)
   doAssert(nil == getNull())
   var j: JSObj = getNull()
   doAssert(j.isNil)
-  
+
 
 block: # Callback
   proc setCallbackAux(t: int, c: proc(a: int) {.cdecl.}) {.importwasmraw: """
@@ -158,15 +166,36 @@ block: # Callback with nil env
 
   main()
 
-# block:
-#   # Custom types
-#   type
-#     HTMLElement = object of JSObj
-#     Canvas = object of HTMLElement
-#   proc append(e, c: HTMLElement) {.importwasmraw: "".}
-#   var a: HTMLElement
-#   # var c: JSExternObj[Canvas] # Must be implicitly convertible to JSExternObj[HTMLElement]
-#   var c: Canvas # Must be implicitly convertible to JSExternObj[HTMLElement]
-#   append(a, c)
+block:
+  # Custom types
+  type
+    HTMLElement = object of JSObj
+    Canvas = object of HTMLElement
+  proc objType(e: HTMLElement): string {.importwasmp.}
+  proc getSomeCanvas(): Canvas {.importwasmexpr: "{objType:'canvas'}".}
+  proc getSomeElement(): HTMLElement {.importwasmexpr: "{objType:'element'}".}
+  proc append(e, c: HTMLElement) {.importwasmraw: "$0.appended = $1".}
+  proc appended(e: HTMLElement): HTMLElement {.importwasmp.}
+
+  proc test() =
+    let a = getSomeElement()
+    doAssert(a.objType == "element")
+    let c = getSomeCanvas()
+    doAssert(c.objType == "canvas")
+    a.append(c)
+    doAssert(a.appended.objType == "canvas")
+    let ao: HTMLElement = getSomeElement()
+    doAssert(ao.objType == "element")
+    let co: Canvas = getSomeCanvas()
+    doAssert(co.objType == "canvas")
+    ao.append(co)
+    doAssert(ao.appended.objType == "canvas")
+    let ce: HTMLElement = getSomeCanvas().toJSObj()
+    a.append(ce)
+    doAssert(a.appended.objType == "canvas")
+    let ce1 = c.to(HTMLElement)
+    a.append(ce1)
+    doAssert(a.appended.objType == "canvas")
+  test()
 
 echo "ok"
