@@ -52,9 +52,11 @@ block:
   init()
   proc myJSObject(): JSObj {.importwasmp.}
   proc someProp(o: JSObj): JSString {.importwasmp.}
+  proc somePropButObj(o: JSObj): JSObj {.importwasmp: "someProp".}
   proc `someProp=`(o: JSObj, s: JSString) {.importwasmp.}
   proc someFunc(o: JSObj, a, b: int): int {.importwasmm.}
   doAssert(myJSObject().someProp() == "hello")
+  doAssert(myJSObject().somePropButObj().to(JSString) == "hello")
   doAssert(myJSObject().someFunc(1, 2) == 3)
   myJSObject().someProp = "hi"
   doAssert(myJSObject().someProp == "hi")
@@ -138,12 +140,23 @@ block: # Callback with string
   $1(1, "hello world")
   """.}
 
+  proc setCallback(c: proc(s: JSExternRef)) {.importwasmraw: """
+  $0("hello world")
+  """.}
+
   proc main() =
     var a = ""
     var cb = proc(a0: int, s: JSExternObj[JSString]) =
       a = s
 
     setCallback(5, cb)
+    doAssert(a == "hello world")
+    a = ""
+
+    let anotherCb = proc(s: JSExternRef) =
+      a = s.to(JSString)
+
+    setCallback(anotherCb)
     doAssert(a == "hello world")
 
   main()
@@ -197,5 +210,24 @@ block:
     a.append(ce1)
     doAssert(a.appended.objType == "canvas")
   test()
+
+block:
+  proc test() =
+    var v: JSExternObj[JSObj]
+    var s: JSExternObj[JSString]
+    v = s
+  test()
+
+block:
+  proc test() =
+    proc someObj(): JSObj {.importwasmexpr:"'hi'".}
+    let o = someObj().toJSObj()
+    let o1 = someObj().toJSObj()
+    var emptyObj: JSObj
+    doAssert(o != emptyObj)
+    doAssert(cast[int](o.o) != cast[int](o1.o))
+    doAssert(o == o1)
+  test()
+
 
 echo "ok"

@@ -2,6 +2,10 @@ import ../wasmrt
 
 {.push stackTrace:off.}
 
+proc uint8MemSlice(s: pointer, length: uint32): JSExternRef {.importwasmexpr: "new Uint8Array(_nima, $0, $1)".}
+proc float32MemSlice(s: pointer, length: uint32): JSExternRef {.importwasmexpr: "new Float32Array(_nima, $0, $1)".}
+proc int32MemSlice(s: pointer, length: uint32): JSExternRef {.importwasmexpr: "new Int32Array(_nima, $0, $1)".}
+
 proc glClearColorI(a, b, c, d: float32) {.importwasmf: "GLCtx.clearColor".}
 proc glClearColor(a, b, c, d: float32) {.exportc.} = glClearColorI(a, b, c, d)
 
@@ -12,7 +16,7 @@ proc glClearI(a: uint32) {.importwasmf: "GLCtx.clear".}
 proc glClear(a: uint32) {.exportc.} = glClearI(a)
 
 proc glCreateProgramI(): JSRef {.importwasmf: "GLCtx.createProgram".}
-proc glCreateProgram(): uint32 {.exportc.} = cast[uint32](glCreateProgramI())
+proc glCreateProgram(): uint32 {.exportc.} = cast[uint32](JSRef(glCreateProgramI()))
 
 proc glDeleteProgramI(h: JSRef) {.importwasmf: "GLCtx.deleteProgram".}
 proc glDeleteProgram(h: uint32) {.exportc.} =
@@ -20,14 +24,14 @@ proc glDeleteProgram(h: uint32) {.exportc.} =
   glDeleteProgramI(h)
   delete(h)
 
-proc glUseProgramI(h: uint32) {.importwasmraw: "window._wrtglap = _nimo[$0];GLCtx.useProgram(_wrtglap)".}
-proc glUseProgram(h: uint32) {.exportc.} = glUseProgramI(h)
+proc glUseProgramI(h: JSRef) {.importwasmf: "window._wrtglap = $0;GLCtx.useProgram".}
+proc glUseProgram(h: uint32) {.exportc.} = glUseProgramI(cast[JSRef](h))
 
 proc glBindBufferI(a: uint32, b: JSRef) {.importwasmf: "GLCtx.bindBuffer".}
 proc glBindBuffer(a, b: uint32) {.exportc.} = glBindBufferI(a, cast[JSRef](b))
 
 proc glCreateShaderI(t: uint32): JSRef {.importwasmf: "GLCtx.createShader".}
-proc glCreateShader(t: uint32): uint32 {.exportc.} = cast[uint32](glCreateShaderI(t))
+proc glCreateShader(t: uint32): uint32 {.exportc.} = cast[uint32](JSRef(glCreateShaderI(t)))
 
 proc glShaderSourceI(s: JSRef, c: cstring) {.importwasmf: "GLCtx.shaderSource".}
 proc glShaderSource(p: uint32, c: int32, s: ptr UncheckedArray[cstring], l: ptr UncheckedArray[int32]) {.exportc.} =
@@ -60,10 +64,11 @@ proc glDeleteTextures(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} =
     delete(h)
 
 proc glCreateTextureI(): JSRef {.importwasmf: "GLCtx.createTexture".}
-proc glCreateTexture(): uint32 {.exportc.} = cast[uint32](glCreateTextureI())
+proc glCreateTexture(): uint32 {.exportc.} =
+  cast[uint32](JSRef(glCreateTextureI()))
 
 proc glGenTextures(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} =
-  for i in 0 ..< sz: tx[i] = cast[uint32](glCreateTextureI())
+  for i in 0 ..< sz: tx[i] = glCreateTexture()
 
 proc glBindTextureI(s: uint32, p: JSRef) {.importwasmf: "GLCtx.bindTexture".}
 proc glBindTexture(s, p: uint32) {.exportc.} = glBindTextureI(s, cast[JSRef](p))
@@ -99,50 +104,51 @@ proc glVertexAttribPointerI(i: uint32, s: int32, t: uint32, n: bool, r: int32, o
 proc glVertexAttribPointer(i: uint32, s: int32, t: uint32, n: bool, r: int32, o: pointer) {.exportc.} =
   glVertexAttribPointerI(i, s, t, n, r, o)
 
-proc glUniformMatrix4fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix4fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima, $2, 16))".}
+proc getUniformLocationObj(l: uint32): JSObj {.importwasmexpr: "_wrtglap._nimu[$0]".}
+
+proc glUniformMatrix4fvI(l: JSObj, t: bool, v: JSExternRef) {.importwasmf: "GLCtx.uniformMatrix4fv".}
 proc glUniformMatrix4fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix4")
-  glUniformMatrix4fvI(l, t, v)
+  glUniformMatrix4fvI(getUniformLocationObj(l), t, float32MemSlice(v, 16))
 
-proc glUniformMatrix3fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix3fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima, $2, 9))".}
+proc glUniformMatrix3fvI(l: JSObj, t: bool, v: JSExternRef) {.importwasmf: "GLCtx.uniformMatrix3fv".}
 proc glUniformMatrix3fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix3")
-  glUniformMatrix3fvI(l, t, v)
+  glUniformMatrix3fvI(getUniformLocationObj(l), t, float32MemSlice(v, 9))
 
-proc glUniformMatrix2fvI(l: uint32, t: bool, v: ptr float32) {.importwasmraw: "GLCtx.uniformMatrix2fv(_wrtglap._nimu[$0], $1, new Float32Array(_nima, $2, 4))".}
+proc glUniformMatrix2fvI(l: JSObj, t: bool, v: JSExternRef) {.importwasmf: "GLCtx.uniformMatrix2fv".}
 proc glUniformMatrix2fv(l, c: uint32, t: bool, v: ptr float32) {.exportc.} =
   assert(c == 1, "c != 1 not supported in glUniformMatrix2")
-  glUniformMatrix2fvI(l, t, v)
+  glUniformMatrix2fvI(getUniformLocationObj(l), t, float32MemSlice(v, 4))
 
-proc glGetUniformLocationI(h: uint32, n: cstring): uint32 {.importwasmraw: """
-  var p = _nimo[$0], N = _nimsj($1);
-  p._nimun ||= {};
-  var r = p._nimun[N];
+proc glGetUniformLocationI(h: JSRef, n: cstring): uint32 {.importwasmraw: """
+  $0._nimun ||= {};
+  var r = $0._nimun[$1];
   if (r === undefined) {
-    p._nimu ||= [];
-    r = p._nimun[N] = p._nimu.push(GLCtx.getUniformLocation(p, N)) - 1
+    $0._nimu ||= [];
+    r = $0._nimun[$1] = $0._nimu.push(GLCtx.getUniformLocation($0, $1)) - 1
   }
   return r
   """.}
-proc glGetUniformLocation(h: uint32, n: cstring): uint32 {.exportc.} = glGetUniformLocationI(h, n)
+proc glGetUniformLocation(h: uint32, n: cstring): uint32 {.exportc.} = glGetUniformLocationI(cast[JSRef](h), n)
 
-proc glUniform1fI(l: uint32, v: float32) {.importwasmraw: "GLCtx.uniform1f(_wrtglap._nimu[$0], $1)".}
-proc glUniform1f(l: uint32, v: float32) {.exportc.} = glUniform1fI(l, v)
+proc glUniform1fI(l: JSObj, v: float32) {.importwasmf: "GLCtx.uniform1f".}
+proc glUniform1f(l: uint32, v: float32) {.exportc.} = glUniform1fI(getUniformLocationObj(l), v)
 
-proc glUniform1iI(l: uint32, v: int32) {.importwasmraw: "GLCtx.uniform1i(_wrtglap._nimu[$0], $1)".}
-proc glUniform1i(l: uint32, v: int32) {.exportc.} = glUniform1iI(l, v)
+proc glUniform1iI(l: JSObj, v: int32) {.importwasmf: "GLCtx.uniform1i".}
+proc glUniform1i(l: uint32, v: int32) {.exportc.} = glUniform1iI(getUniformLocationObj(l), v)
 
-proc glUniform1fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform1fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
-proc glUniform1fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform1fvI(l, v, c * 1)
+proc glUniform1fvI(l: JSObj, b: JSExternRef) {.importwasmf: "GLCtx.uniform1fv".}
+proc glUniform1fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform1fvI(getUniformLocationObj(l), float32MemSlice(v, c * 1))
 
-proc glUniform2fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform2fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
-proc glUniform2fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform2fvI(l, v, c * 2)
+proc glUniform2fvI(l: JSObj, b: JSExternRef) {.importwasmf: "GLCtx.uniform2fv".}
+proc glUniform2fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform2fvI(getUniformLocationObj(l), float32MemSlice(v, c * 2))
 
-proc glUniform3fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform3fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
-proc glUniform3fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform3fvI(l, v, c * 3)
+proc glUniform3fvI(l: JSObj, b: JSExternRef) {.importwasmf: "GLCtx.uniform3fv".}
+proc glUniform3fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform3fvI(getUniformLocationObj(l), float32MemSlice(v, c * 3))
 
-proc glUniform4fvI(l: uint32, b: ptr float32, s: uint32) {.importwasmraw: "GLCtx.uniform4fv(_wrtglap._nimu[$0], new Float32Array(_nima, $1, $2))".}
-proc glUniform4fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform4fvI(l, v, c * 4)
+proc glUniform4fvI(l: JSObj, b: JSExternRef) {.importwasmf: "GLCtx.uniform4fv".}
+proc glUniform4fv(l, c: uint32, v: ptr float32) {.exportc.} = glUniform4fvI(getUniformLocationObj(l), float32MemSlice(v, c * 4))
 
 proc glDrawArraysI(m, f, c: uint32) {.importwasmf: "GLCtx.drawArrays".}
 proc glDrawArrays(m, f, c: uint32) {.exportc.} = glDrawArraysI(m, f, c)
@@ -177,59 +183,55 @@ proc glBlendFunc(a, b: uint32) {.exportc.} = glBlendFuncI(a, b)
 proc glActiveTextureI(a: uint32) {.importwasmf: "GLCtx.activeTexture".}
 proc glActiveTexture(a: uint32) {.exportc.} = glActiveTextureI(a)
 
-proc glBufferDataI(t, s: uint32, d: pointer, u: uint32) {.importwasmraw: "GLCtx.bufferData($0, new DataView(_nima, $2, $1), $3)".}
-proc glBufferData(t, s: uint32, d: pointer, u: uint32) {.exportc.} = glBufferDataI(t, s, d, u)
+proc glBufferDataI(t: uint32, d: JSExternRef, u: uint32) {.importwasmf: "GLCtx.bufferData".}
+proc glBufferData(t, s: uint32, d: pointer, u: uint32) {.exportc.} =
+  glBufferDataI(t, uint8MemSlice(d, s), u)
 
 proc glDrawElementsI(a, b, c, d: uint32) {.importwasmf: "GLCtx.drawElements".}
 proc glDrawElements(a, b, c, d: uint32) {.exportc.} = glDrawElementsI(a, b, c, d)
 
-# proc glTexSubImage2DI() {.importwasmraw: "".}
-# proc glTexSubImage2D() {.exportc.} = glTexSubImage2DI()
-
 proc glPixelStoreiI(a, b: uint32) {.importwasmf: "GLCtx.pixelStorei".}
 proc glPixelStorei(a, b: uint32) {.exportc.} = glPixelStoreiI(a, b)
 
-proc glTexImage2DUint8I(t: uint32, l, i: int32, w, h, b: int32, f, k: uint32, s: int32, p: pointer) {.importwasmraw: """
-  GLCtx.texImage2D($0, $1, $2, $3, $4, $5, $6, $7, $9?new Uint8Array(_nima, $9, $8):null);
-  """.}
+proc glTexImage2DI(t: uint32, l, i: int32, w, h, b: int32, f, k: uint32, p: JSExternRef) {.importwasmf: "GLCtx.texImage2D".}
 import strutils
 
-proc bytesInFormat(f: uint32): int32 =
+proc componentsInFormat(f: uint32): int32 =
   case f
-  of 0x1906, 0x1909: # ALPHA, LUMINANCE
-    1
-  of 0x190A: # LUMINANCE_ALPHA
-    2
-  of 0x1907: # RGB
-    3
-  of 0x1908: # RGBA
-    4
+  of 0x1906, 0x1909: 1 # ALPHA, LUMINANCE
+  of 0x190A: 2 # LUMINANCE_ALPHA
+  of 0x1907: 3 # RGB
+  of 0x1908: 4 # RGBA
   else:
-    echo "unknown format: ", toHex(f)
-    assert(false, "Unknown format " & $f)
+    # echo "unknown format: ", toHex(f)
+    assert(false, "Unknown format " & toHex(f))
     0
 
-proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, border: int32, format, typ: uint32, data: pointer) {.exportc.} =
-  case typ
-  of 0x1401: # UNSIGNED_BYTE
-    glTexImage2DUint8I(target, level, internalFormat, width, height, border, format, typ, width * height * bytesInFormat(format), data)
+proc bytesInComponentTyp(t: uint32): int32 =
+  case t
+  of 0x1401: 1 # UNSIGNED_BYTE
   else:
-    echo "unknown typ: ", toHex(format)
-    assert(false, "Unknown typ " & $format)
+    # echo "unknown typ: ", toHex(t)
+    assert(false, "Unknown typ " & toHex(t))
+    0
+  
+proc bytesInPixel(format, typ: uint32): int32 =
+  componentsInFormat(format) * bytesInComponentTyp(typ)
 
-proc glTexSubImage2DUint8I(t: uint32, l, x, y: int32, w, h: int32, f, k: uint32, s: int32, p: pointer) {.importwasmraw: """
-  GLCtx.texSubImage2D($0, $1, $2, $3, $4, $5, $6, $7, new Uint8Array(_nima, $9, $8))
-  """.}
+proc nullExternRef(): JSExternRef {.importc: "__builtin_wasm_ref_null_extern", nodecl.}
+proc glTexImage2D(target: uint32, level, internalFormat: int32, width, height, border: int32, format, typ: uint32, data: pointer) {.exportc.} =
+  var m: JSExternRef
+  if data != nil:
+    m = uint8MemSlice(data, uint32(width * height * bytesInPixel(format, typ)))
+  else:
+    m = nullExternRef()
+  glTexImage2DI(target, level, internalFormat, width, height, border, format, typ, m)
+
+proc glTexSubImage2DI(t: uint32, l, x, y: int32, w, h: int32, f, k: uint32, p: JSExternRef) {.importwasmf: "GLCtx.texSubImage2D".}
 
 proc glTexSubImage2D(target: uint32, level, xoffset, yoffset: int32, width, height: int32, format, typ: uint32, data: pointer) {.exportc.} =
-  case typ
-  of 0x1401: # UNSIGNED_BYTE
-    glTexSubImage2DUint8I(target, level, xoffset, yoffset, width, height, format, typ, width * height * bytesInFormat(format), data)
-  # of 0x8363: # UNSIGNED_SHORT_5_6_5
-  else:
-    echo "unknown typ: ", toHex(format)
-    assert(false, "Unknown typ " & $format)
-
+  let m = uint8MemSlice(data, uint32(width * height * bytesInPixel(format, typ)))
+  glTexSubImage2DI(target, level, xoffset, yoffset, width, height, format, typ, m)
 
 proc glBlendFuncSeparateI(a, b, c, d: uint32) {.importwasmf: "GLCtx.blendFuncSeparate".}
 proc glBlendFuncSeparate(a, b, c, d: uint32) {.exportc.} = glBlendFuncSeparateI(a, b, c, d)
@@ -249,22 +251,22 @@ proc glDeleteRenderbuffers(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc
     delete(h)
 
 proc glCreateFramebufferI(): JSRef {.importwasmf: "GLCtx.createFramebuffer".}
-proc glCreateFramebuffer(): uint32 {.exportc.} = cast[uint32](glCreateFramebufferI())
+proc glCreateFramebuffer(): uint32 {.exportc.} = cast[uint32](JSRef(glCreateFramebufferI()))
 proc glGenFramebuffers(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} =
-  for i in 0 ..< sz: tx[i] = cast[uint32](glCreateFramebufferI())
+  for i in 0 ..< sz: tx[i] = glCreateFramebuffer()
 
 proc glCreateBufferI(): JSRef {.importwasmf: "GLCtx.createBuffer".}
-proc glCreateBuffer(): uint32 {.exportc.} = cast[uint32](glCreateBufferI())
+proc glCreateBuffer(): uint32 {.exportc.} = cast[uint32](JSRef(glCreateBufferI()))
 proc glGenBuffers(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} =
-  for i in 0 ..< sz: tx[i] = cast[uint32](glCreateBufferI())
+  for i in 0 ..< sz: tx[i] = glCreateBuffer()
 
 proc glBindFramebufferI(a: uint32, b: JSRef) {.importwasmf: "GLCtx.bindFramebuffer".}
 proc glBindFramebuffer(a, b: uint32) {.exportc.} = glBindFramebufferI(a, cast[JSRef](b))
 
 proc glCreateRenderbufferI(): JSRef {.importwasmf: "GLCtx.createRenderbuffer".}
-proc glCreateRenderbuffer(): uint32 {.exportc.} = cast[uint32](glCreateRenderbufferI())
+proc glCreateRenderbuffer(): uint32 {.exportc.} = cast[uint32](JSRef(glCreateRenderbufferI()))
 proc glGenRenderbuffers(sz: uint32, tx: ptr UncheckedArray[uint32]) {.exportc.} =
-  for i in 0 ..< sz: tx[i] = cast[uint32](glCreateRenderbufferI())
+  for i in 0 ..< sz: tx[i] = glCreateRenderbuffer()
 
 proc glBindRenderbufferI(a: uint32, b: JSRef) {.importwasmf: "GLCtx.bindRenderbuffer".}
 proc glBindRenderbuffer(a, b: uint32) {.exportc.} = glBindRenderbufferI(a, cast[JSRef](b))
@@ -278,33 +280,51 @@ proc glFramebufferRenderbuffer(a, b, c, d: uint32) {.exportc.} = glFramebufferRe
 proc glFramebufferTexture2DI(a, b, c: uint32, d: JSRef, e: int32) {.importwasmf: "GLCtx.framebufferTexture2D".}
 proc glFramebufferTexture2D(a, b, c, d: uint32, e: int32) {.exportc.} = glFramebufferTexture2DI(a, b, c, cast[JSRef](d), e)
 
-proc glGetIntegervI(a: uint32, v: ptr int32) {.importwasmraw: """
-  var o = GLCtx.getParameter($0);
-  _nimwi(o['length'] == undefined ? [o] : o, $1)
-  """.}
-proc glGetIntegerv(a: uint32, v: ptr int32) {.exportc.} = glGetIntegervI(a, v)
+proc glGetParameter(a: uint32): JSObj {.importwasmf: "GLCtx.getParameter".}
+proc length(a: JSObj): uint32 {.importwasmp: "length".}
+proc setMem(a, b: JSRef) {.importwasmm: "set".}
+proc jsObjToInt(o: JSObj): int32 {.importwasmexpr: "$0".}
+proc jsObjToFloat(o: JSObj): float32 {.importwasmexpr: "$0".}
 
-proc glGetBooleanvI(a: uint32): int32 {.importwasmf: "!!GLCtx.getParameter".}
-proc glGetBooleanv(a: uint32, v: ptr bool) {.exportc.} = v[] = glGetBooleanvI(a) != 0
+proc glGetIntegerv(a: uint32, v: ptr int32) {.exportc.} =
+  let p = glGetParameter(a)
+  let sz = p.length
+  if sz == 0:
+    v[] = jsObjToInt(p)
+  else:
+    setMem(int32MemSlice(v, sz), p)
 
-proc glGetFloatvI(a: uint32, v: ptr float32) {.importwasmraw: """
-  var o = GLCtx.getParameter($0);
-  _nimwf(o['length'] == undefined ? [o] : o, $1)
-  """.}
-proc glGetFloatv(a: uint32, v: ptr float32) {.exportc.} = glGetFloatvI(a, v)
+proc glGetBooleanv(a: uint32, v: ptr bool) {.exportc.} =
+  v[] = jsObjToInt(glGetParameter(a)).bool
+
+proc glGetFloatv(a: uint32, v: ptr float32) {.exportc.} =
+  let p = glGetParameter(a)
+  let sz = p.length
+  if sz == 0:
+    v[] = jsObjToFloat(p)
+  else:
+    setMem(float32MemSlice(v, sz), p)
 
 proc glViewportI(a, b, c, d: uint32) {.importwasmf: "GLCtx.viewport".}
 proc glViewport(a, b, c, d: uint32) {.exportc.} = glViewportI(a, b, c, d)
 
-proc glGetInfoLogI(p: int32, s: uint32, m: int32, l: ptr int32, i: ptr char) {.importwasmraw:"""
-  var o = GLCtx[$0?'getShaderInfoLog':'getProgramInfoLog'](_nimo[$1]);
-  if ($3) _nimwi([o.length], $3);
-  if ($4) _nimws(o, $4, $2);
-  """.}
+proc glGetShaderInfoLogI(s: JSRef): JSString {.importwasmf: "GLCtx.getShaderInfoLog".}
+proc glGetProgramInfoLogI(s: JSRef): JSString {.importwasmf: "GLCtx.getProgramInfoLog".}
+
+proc jsStrToMem(s: JSExternObj[JSString], maxLen: int32, length: ptr int32, infoLog: ptr char) =
+  let s = $s
+  var sz = s.len.int32
+  if maxLen < sz:
+    sz = maxLen
+  if length != nil:
+    length[] = sz
+  if infoLog != nil and sz != 0:
+    copyMem(infoLog, addr s[0], sz)
+
 proc glGetShaderInfoLog(s: uint32, maxLength: int32, length: ptr int32, infoLog: ptr char) {.exportc.} =
-  glGetInfoLogI(1, s, maxLength, length, infoLog)
+  jsStrToMem(glGetShaderInfoLogI(cast[JSRef](s)), maxLength, length, infoLog)
 proc glGetProgramInfoLog(s: uint32, maxLength: int32, length: ptr int32, infoLog: ptr char) {.exportc.} =
-  glGetInfoLogI(0, s, maxLength, length, infoLog)
+  jsStrToMem(glGetProgramInfoLogI(cast[JSRef](s)), maxLength, length, infoLog)
 
 {.pop.} # stackTrace:off
 

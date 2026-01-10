@@ -34,10 +34,12 @@ type
 
   JSExternRef* = JSExternObjBase
 
+  JSExternFuncRef* {.importc: "typeof(void (*__funcref)())".} = object
+
 macro parent(t: typedesc): untyped =
   let n = t.getType()[1]
   if sameType(n, bindSym"JSObj"):
-    return bindSym"JSExternRef"
+    return bindSym"JSExternObjBase"
   else:
     let imp = n.getTypeImpl()
     imp.expectKind(nnkObjectTy)
@@ -55,7 +57,8 @@ type ExternRefTable {.importc.} = object
 var globalRefs {.codegendecl: "static __externref_t $2[0]".}: ExternRefTable
 proc wasmTableGrow(t: ExternRefTable, e: JSExternRef, by: cint): int32 {.importc: "__builtin_wasm_table_grow", nodecl.}
 proc wasmTableSet(t: ExternRefTable, i: cint, e: JSExternRef) {.importc: "__builtin_wasm_table_set", nodecl.}
-proc wasmTableGet(t: ExternRefTable, i: cint): JSExternRef {.importc: "__builtin_wasm_table_get", nodecl.}
+proc wasmTableGet(t: ExternRefTable, i: cint): JSExternRef {.importc: "__builtin_wasm_table_get", nodecl, enforceNoRaises.}
+proc wasmTableSize(t: ExternRefTable): cint {.importc: "__builtin_wasm_table_size", nodecl.}
 
 proc nullExternRef(): JSExternRef {.importc: "__builtin_wasm_ref_null_extern", nodecl.}
 
@@ -72,24 +75,25 @@ proc storeRef(e: JSExternRef): int32 {.noinline.} =
   discard globalRefsTab()
   if firstRef < 0:
     result = wasmTableGrow(globalRefs, e, 1) # returns previous size
-    refs[result + 1] = 1
   else:
     result = firstRef
     firstRef = refs[result]
-    wasmTableSet(globalRefs, result, e)
+  refs[result] = 1
+  wasmTableSet(globalRefs, result, e)
 
 proc createJSRef(e: JSExternRef): JSRef {.inline.} =
   cast[JSRef](storeRef(e))
 
-converter toJSExternRef*(e: JSRef): JSExternRef =
+converter toJSExternRef*(e: JSRef): JSExternRef {.enforceNoRaises.} =
+  # echo "WASM GET: ", cast[int](e), "/", wasmTableSize(globalRefs)
   wasmTableGet(globalRefs, cast[int32](e))
+
 # Return type
 # 0IIIAARF
 # F - 1 - 0 dont prepend first arg, 1 prepend
 # R - 1 - 0 do nothing, 1 prepend "return"
 # A - 2 - 0 dont append args, 1 append args as call, 2 assign last arg
 # I - 3 - ID
-
 proc retTypeSigA(r, f, a: int): int {.compileTime.} =
   (a shl 2) or (r shl 1) or (f shl 0)
 
@@ -127,11 +131,9 @@ template toWasm*(a: JSExternObj): auto = a
 template toWasm*(a: JSExternRef): JSExternRef = a
 template toWasm*(a: JSRef): JSExternRef = toJSExternRef(a)
 template toWasm*[T: JSObj](a: T): JSExternObj[T] = JSExternObj[T](toJSExternRef(a.o))
-template toWasm*(a: int|uint|int32|uint32|uint64|float32|float64|bool|pointer|ptr|enum|set): auto = a
+template toWasm*(a: int|uint|int32|uint32|uint64|float32|float64|cfloat|cdouble|bool|pointer|ptr|enum|set): auto = a
 # template toWasm*(p: proc {.cdecl.}): pointer = cast[pointer](p)
 
-type
-  JSExternFuncRef* {.importc: "typeof(void (*__funcref)())".} = object
 
 template toWasm*(a: JSExternFuncRef): auto = a
 
@@ -349,6 +351,9 @@ template `==`*(n: typeof(nil), e: JSExternRef): bool = isNil(e)
 proc isNil*(j: JSRef): bool {.inline, enforceNoRaises.} = toJSExternRef(j) == nil
 proc isNil*(o: JSObj): bool {.inline, enforceNoraises.} = o.o.isNil
 
+proc refEq(a, b: JSExternRef): bool {.importwasmexpr: "$0 == $1".}
+proc `==`*(a, b: JSExternRef): bool {.inline.} = refEq(a, b)
+
 proc uint8MemSlice(s: pointer, length: uint32): JSRef {.importwasmexpr: "new Uint8Array(_nima, $0, $1)".}
 
 proc strToJs(m: JSRef): JSExternObj[JSString] {.importwasmf: "new TextDecoder().decode", enforceNoRaises.}
@@ -394,15 +399,15 @@ converter toJSRef*(e: JSExternRef): JSRef =
   createJSRef(e)
 
 converter toJSExternObj*[T: JSObj](o: T): JSExternObj[T] {.inline.} =
-  JSExternObj[T](wasmTableGet(globalRefs, cast[int32](o.o)))
+  JSExternObj[T](toJSExternRef(o.o))
 
 converter toJSObj*[T: JSObj](e: JSExternObj[T]): T {.inline.} =
   T(o: cast[JSRef](storeRef(JSExternRef(e))))
 
-proc to*[T: JSObj, F](e: JSExternObj[F]): T {.inline.} =
-  T(o: cast[JSRef](storeRef(JSExternRef(e))))
+converter toString*(j: JSString): string {.inline.} = toString(JSExternObj[JSString](j))
+proc `$`*(j: JSString): string {.inline.} = toString(j)
 
-proc toFuncExternRef(p: pointer): JSExternFuncRef {.importc, codegendecl: codegenDeclStr("\\06\\01_nimm.exports.__indirect_function_table.get").}
+proc toFuncExternRef(p: pointer): JSExternFuncRef {.importwasmf: "_nime.__indirect_function_table.get".}
 
 proc argNameForIdx(i: int): string =
   # generate a stable short arg name, unique for i
@@ -464,6 +469,7 @@ proc toClosureFuncExternRef(p: proc{.closure.}): JSExternRef =
       closurizeFunction(p, ep, e)
 
 template toWasm*(p: proc{.cdecl.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
+template toWasm*(p: proc{.nimcall.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
 template toWasm*(p: proc{.closure.}): JSExternRef = toClosureFuncExternRef(p)
 template toWasm*(a: JSString): JSExternObj[JSString] = JSExternObj[JSString](toJSExternRef(a.o))
 
@@ -496,10 +502,6 @@ proc `=destroy`*(a: var JSObj) =
 
 converter toJSExternRef*(e: JSObj): JSExternRef {.inline.} = toJSExternRef(e.o)
 
-converter toJSObj*(e: JSExternRef): JSObj =
-  if e.isNil: return JSObj()
-  JSObj(o: createJSRef(e))
-
 when not defined(release):
   proc nimerr() {.exportwasm.} =
     writeStackTrace()
@@ -511,6 +513,7 @@ proc to*(o: sink JSObj, T: typedesc[JSObj]): T {.inline.} =
   T(o: r)
 
 template to*[From](o: JSExternObj[From], T: typedesc[JSObj]): auto = JSExternObj[T](o)
+template to*(o: JSExternRef, T: typedesc[JSObj]): auto = JSExternObj[T](o)
 
 const initCode = (""";
 var W = WebAssembly, o = {}, g = globalThis, q='';
@@ -535,21 +538,14 @@ for (i of W.Module.imports(m)) {
       b += ')'
     }
 
-    // console.log("BODY",
-      // (r&2?'return ':q) + // Prepend return
-      // (F?'$0.':q) + // Prepend first arg dot
-      // b + // The source code
-      // (r&8?'=$' + (p-1):q) // Append assignment to last arg
-    // );
-
-
-
     o[n] = new Function(a,
       (r&2?'return ':q) + // Prepend return
       (F?'$0.':q) + // Prepend first arg dot
       b + // The source code
       (r&8?'=$' + (p-1):q) // Append assignment to last arg
     )
+
+    // ; console.log(o[n].toString());
   }
   else
     console.warn('Undefined external symbol: ', n),
@@ -642,13 +638,7 @@ proc dlopen(a: cstring, f: cint): cint {.exportc.} =
 
 const wasmPageSize = 64 * 1024
 proc wasmMemorySize(i: int32): int32 {.importc: "__builtin_wasm_memory_size", nodecl.}
-proc wasmMemoryGrow(b: int32): int32 {.inline.} =
-  when true:
-    proc int_wasm_memory_grow(m, b: int32) {.importc: "__builtin_wasm_memory_grow", nodecl.}
-    int_wasm_memory_grow(0, b)
-  else:
-    proc int_wasm_memory_grow(b: int32) {.importc: "__builtin_wasm_grow_memory", nodecl.}
-    int_wasm_memory_grow(b)
+proc wasmMemoryGrow(i, b: int32): int32 {.importc: "__builtin_wasm_memory_grow", nodecl.}
 
 # proc wasmThrow(b: int32, p: pointer) {.importc: "__builtin_wasm_throw", nodecl.}
 # proc wasmGetException(b: int32): pointer {.importc: "__builtin_wasm_catch", nodecl.}
@@ -668,8 +658,8 @@ proc wasmAlloc(block_size: uint): pointer {.inline, enforceNoRaises.} =
   memStart += block_size
 
   if availableMemory < block_size:
-    let wasmPagesToAllocate = block_size div wasmPageSize + 1
-    let oldPages = wasmMemoryGrow(int32(wasmPagesToAllocate))
+    let wasmPagesToAllocate = (block_size - availableMemory) div wasmPageSize + 1
+    let oldPages = wasmMemoryGrow(0, int32(wasmPagesToAllocate))
     if oldPages < 0:
       return nil
 
