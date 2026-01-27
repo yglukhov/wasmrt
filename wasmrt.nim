@@ -2,6 +2,7 @@ import std/[macros, strutils, os, tables]
 import wasmrt/minify
 
 const wasmrtImportModuleName {.strdefine.} = "env"
+const wasmrtMaxExternrefsCount = 32768 # 32768 (1 page), 65536 (2 pages)
 
 macro exportwasm*(p: untyped): untyped =
   expectKind(p, nnkProcDef)
@@ -24,6 +25,11 @@ iterator arguments(formalParams: NimNode): tuple[idx: int, name, typ, default: N
     for j in 0 .. pp.len - 3:
       yield (iParam, pp[j], copyNimTree(stripSinkFromArgType(pp[^2])), pp[^1])
       inc iParam
+
+when wasmrtMaxExternrefsCount <= uint64(uint16.high) + 1:
+  type StoredRefIdx = uint16
+else:
+  type StoredRefIdx = uint32
 
 type
   JSRef* = distinct pointer
@@ -68,18 +74,18 @@ proc globalRefsTab(): int =
   var g {.global.} = initGlobalRefsTab()
   g
 
-var firstRef: int32 = -1
-var refs: array[64 * 1024 div sizeof(int32), int32] # Occupies 64KB
+var firstRef: StoredRefIdx = 0
+var refs: array[wasmrtMaxExternrefsCount, StoredRefIdx]
 
-proc storeRef(e: JSExternRef): int32 {.noinline.} =
+proc storeRef(e: JSExternRef): StoredRefIdx {.noinline.} =
   discard globalRefsTab()
-  if firstRef < 0:
-    result = wasmTableGrow(globalRefs, e, 1) # returns previous size
+  if firstRef == 0:
+    result = StoredRefIdx(wasmTableGrow(globalRefs, e, 1)) # returns previous size
   else:
     result = firstRef
     firstRef = refs[result]
   refs[result] = 1
-  wasmTableSet(globalRefs, result, e)
+  wasmTableSet(globalRefs, cint(result), e)
 
 proc createJSRef(e: JSExternRef): JSRef {.inline.} =
   cast[JSRef](storeRef(e))
@@ -474,17 +480,18 @@ template toWasm*(p: proc{.closure.}): JSExternRef = toClosureFuncExternRef(p)
 template toWasm*(a: JSString): JSExternObj[JSString] = JSExternObj[JSString](toJSExternRef(a.o))
 
 proc retain*(r: JSRef) =
-  let idx = cast[int32](r)
+  let idx = cast[StoredRefIdx](r)
+  assert(idx == 0 or refs[idx] != StoredRefIdx.high, "Maximum reference count reached for externref")
   inc refs[idx]
 
 proc release*(r: JSRef) {.noinline.} =
-  let idx = cast[int32](r)
+  let idx = cast[StoredRefIdx](r)
   var cnt = refs[idx]
   dec cnt
   if cnt == 0:
     refs[idx] = firstRef
     firstRef = idx
-    wasmTableSet(globalRefs, idx, nullExternRef())
+    wasmTableSet(globalRefs, cint(idx), nullExternRef())
   else:
     refs[idx] = cnt
 
@@ -498,7 +505,7 @@ proc `=copy`*(a: var JSObj, b: JSObj) =
 
 proc `=destroy`*(a: var JSObj) =
   release(a.o)
-  a.o = JSRef(nil)
+  a.o = default(JSRef)
 
 converter toJSExternRef*(e: JSObj): JSExternRef {.inline.} = toJSExternRef(e.o)
 
