@@ -31,21 +31,26 @@ when wasmrtMaxExternrefsCount <= uint64(uint16.high) + 1:
 else:
   type StoredRefIdx = uint32
 
-type
-  JSRef* = distinct pointer
-  JSObj* {.inheritable, pure.} = object
-    o*: JSRef
-  JSString* = object of JSObj
-  JSExternObjBase {.inheritable, pure, noinit, importc: "__externref_t", bycopy.} = object
+macro externref*(a: untyped{nkTypeDef}): untyped =
+  a[0][1].add(ident"bycopy")
+  a[0][1].add(ident"noinit")
+  a[0][1].add(nnkExprColonExpr.newTree(ident"importc", newLit("__externref_t")))
+  result = a
 
-  JSExternRef* = JSExternObjBase
+type
+  JSObject* {.inheritable, pure, externref.} = object
+  JSRef* = distinct StoredRefIdx
+  StoredBase {.inheritable, pure.} = object
+    o*: JSRef
+
+  JSString* {.externref.} = object of JSObject
 
   JSExternFuncRef* {.importc: "typeof(void (*__funcref)())".} = object
 
-macro parent(t: typedesc): untyped =
+macro storedImpl(t: typedesc): untyped =
   let n = t.getType()[1]
-  if sameType(n, bindSym"JSObj"):
-    return bindSym"JSExternObjBase"
+  if sameType(n, bindSym"JSObject"):
+    return bindSym"StoredBase"
   else:
     let imp = n.getTypeImpl()
     imp.expectKind(nnkObjectTy)
@@ -53,20 +58,19 @@ macro parent(t: typedesc): untyped =
     result = newTree(nnkObjectTy,
                     newEmptyNode(),
                     newTree(nnkOfInherit,
-                            newTree(nnkBracketExpr, ident"JSExternObj", base)),
+                            newTree(nnkBracketExpr, ident"Stored", base)),
                     newEmptyNode())
 
 type
-  JSExternObj*[T] {.noinit, importc: "__externref_t", bycopy.} = parent(T)
-
+  Stored*[T] = storedImpl(T)
 type ExternRefTable {.importc.} = object
 var globalRefs {.codegendecl: "static __externref_t $2[0]".}: ExternRefTable
-proc wasmTableGrow(t: ExternRefTable, e: JSExternRef, by: cint): int32 {.importc: "__builtin_wasm_table_grow", nodecl.}
-proc wasmTableSet(t: ExternRefTable, i: cint, e: JSExternRef) {.importc: "__builtin_wasm_table_set", nodecl.}
-proc wasmTableGet(t: ExternRefTable, i: cint): JSExternRef {.importc: "__builtin_wasm_table_get", nodecl, enforceNoRaises.}
+proc wasmTableGrow(t: ExternRefTable, e: JSObject, by: cint): int32 {.importc: "__builtin_wasm_table_grow", nodecl.}
+proc wasmTableSet(t: ExternRefTable, i: cint, e: JSObject) {.importc: "__builtin_wasm_table_set", nodecl.}
+proc wasmTableGet(t: ExternRefTable, i: cint): JSObject {.importc: "__builtin_wasm_table_get", nodecl, enforceNoRaises.}
 proc wasmTableSize(t: ExternRefTable): cint {.importc: "__builtin_wasm_table_size", nodecl.}
 
-proc nullExternRef(): JSExternRef {.importc: "__builtin_wasm_ref_null_extern", nodecl.}
+proc nullExternRef(): JSObject {.importc: "__builtin_wasm_ref_null_extern", nodecl.}
 
 proc globalRefsTab(): int =
   proc initGlobalRefsTab(): int =
@@ -77,20 +81,50 @@ proc globalRefsTab(): int =
 var firstRef: StoredRefIdx = 0
 var refs: array[wasmrtMaxExternrefsCount, StoredRefIdx]
 
-proc storeRef(e: JSExternRef): StoredRefIdx {.noinline.} =
+proc storeExternRefAux(o: JSObject): StoredRefIdx =
   discard globalRefsTab()
   if firstRef == 0:
-    result = StoredRefIdx(wasmTableGrow(globalRefs, e, 1)) # returns previous size
+    result = StoredRefIdx(wasmTableGrow(globalRefs, o, 1)) # returns previous size
   else:
     result = firstRef
     firstRef = refs[result]
   refs[result] = 1
-  wasmTableSet(globalRefs, cint(result), e)
+  wasmTableSet(globalRefs, cint(result), o)
 
-proc createJSRef(e: JSExternRef): JSRef {.inline.} =
-  cast[JSRef](storeRef(e))
+proc storeExternRef*(o: JSObject): JSRef {.inline.} = JSRef(storeExternRefAux(o))
 
-converter toJSExternRef*(e: JSRef): JSExternRef {.enforceNoRaises.} =
+proc store*[T: JSObject](v: T): Stored[T] {.inline, enforceNoRaises.} = Stored[T](o: storeExternRef(v))
+
+proc release*(r: JSRef) {.noinline.} =
+  let idx = StoredRefIdx(r)
+  var cnt = refs[idx]
+  dec cnt
+  if cnt == 0:
+    refs[idx] = firstRef
+    firstRef = idx
+    wasmTableSet(globalRefs, cint(idx), nullExternRef())
+  else:
+    refs[idx] = cnt
+
+proc retain*(r: JSRef) =
+  let idx = StoredRefIdx(r)
+  assert(idx == 0 or refs[idx] != StoredRefIdx.high, "Maximum reference count reached for externref")
+  inc refs[idx]
+
+proc `=copy`*(a: var StoredBase, b: StoredBase) =
+  retain(b.o)
+  release(a.o)
+  a.o = b.o
+
+proc `=destroy`*(a: var StoredBase) =
+  release(a.o)
+  a.o = default(JSRef)
+
+proc `=dup`*(a: StoredBase): StoredBase =
+  result = a
+  retain(a.o)
+
+converter toJSExternRef*(e: JSRef): JSObject {.enforceNoRaises.} =
   # echo "WASM GET: ", cast[int](e), "/", wasmTableSize(globalRefs)
   wasmTableGet(globalRefs, cast[int32](e))
 
@@ -133,15 +167,10 @@ proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): int =
     a = 1
   retTypeSigA(r, f, a)
 
-template toWasm*(a: JSExternObj): auto = a
-template toWasm*(a: JSExternRef): JSExternRef = a
-template toWasm*(a: JSRef): JSExternRef = toJSExternRef(a)
-template toWasm*[T: JSObj](a: T): JSExternObj[T] = JSExternObj[T](toJSExternRef(a.o))
+template toWasm*[T: JSObject](a: T): T = a
+template toWasm*[T: JSObject](a: Stored[T]): T = T(toJSExternRef(a.o))
 template toWasm*(a: int|uint|int32|uint32|uint64|float32|float64|cfloat|cdouble|bool|pointer|ptr|enum|set): auto = a
-# template toWasm*(p: proc {.cdecl.}): pointer = cast[pointer](p)
-
-
-template toWasm*(a: JSExternFuncRef): auto = a
+template toWasm*(a: JSExternFuncRef): JSExternFuncRef = a
 
 template toWasmType(t: typedesc): typedesc =
   mixin toWasm
@@ -153,10 +182,8 @@ template toWasmType(t: typedesc): typedesc =
 template toWasmWrapperType(t: typedesc): typedesc =
   when t is void:
     void
-  elif t is JSRef:
-    JSExternRef
-  elif t is JSObj:
-    JSExternObj[t] | t
+  elif t is JSObject:
+    Stored[t] | t
   else:
     t
 
@@ -166,7 +193,7 @@ template wasmTypeSig(t: typedesc): string =
   elif toWasmType(t) is int64|uint64: "i64"
   elif toWasmType(t) is float32|cfloat: "f32"
   elif toWasmType(t) is float64|float|cdouble: "f64"
-  elif toWasmType(t) is JSExternRef|JSExternObj: "r"
+  elif toWasmType(t) is JSObject: "r"
   elif toWasmType(t) is JSExternFuncRef: "p"
   else:
     {.error: "Unexpected type: " & $t.}
@@ -214,8 +241,8 @@ macro importwasmAux2(body, typSig: static[string], p: untyped, funSig, numArgs: 
   for i in 1 ..< parms.len:
     parms[i][^2] = newCall(bindSym"toWasmWrapperType", parms[i][^2])
 
-  if parms[0].kind != nnkEmpty:
-    parms[0] = newCall(bindSym"toWasmWrapperType", parms[0])
+  # if parms[0].kind != nnkEmpty:
+  #   parms[0] = newCall(bindSym"toWasmWrapperType", parms[0])
   wrapper.params = parms
   let nameid = ident($p.name & "_nimwasmimport_" & $id)
   inc id
@@ -341,8 +368,9 @@ macro importwasmexpr*(name: static[string], b: untyped): untyped =
   # Refer to args with `$NUM`, NUM starting from 0.
   result = importWasmAux(name, b, false, true, false, false)
 
-proc isNilJSShim(e: JSExternRef): bool {.importwasmexpr: "$0 == null".}
-proc isNil*(r: JSExternRef): bool {.stackTrace: off, enforceNoRaises.} =
+proc isNilJSShimAux(e: JSObject): bool {.importwasmexpr: "$0 == null".}
+proc isNilJSShim(e: JSObject): bool {.inline, enforceNoRaises.} = isNilJSShim(e)
+proc isNil*(r: JSObject): bool {.stackTrace: off, enforceNoRaises.} =
   {.emit: """
   #if __has_builtin(__builtin_wasm_ref_is_null_extern)
     `result` = __builtin_wasm_ref_is_null_extern(`r`);
@@ -351,67 +379,54 @@ proc isNil*(r: JSExternRef): bool {.stackTrace: off, enforceNoRaises.} =
   #endif
   """.}
 
-template `==`*(e: JSExternRef, n: typeof(nil)): bool = isNil(e)
-template `==`*(n: typeof(nil), e: JSExternRef): bool = isNil(e)
+template `==`*(e: JSObject, n: typeof(nil)): bool = isNil(e)
+template `==`*(n: typeof(nil), e: JSObject): bool = isNil(e)
 
-proc isNil*(j: JSRef): bool {.inline, enforceNoRaises.} = toJSExternRef(j) == nil
-proc isNil*(o: JSObj): bool {.inline, enforceNoraises.} = o.o.isNil
+proc isNil*(j: JSRef): bool {.inline, enforceNoRaises.} = toJSExternRef(j).isNil
+proc isNil*[T](o: Stored[T]): bool {.inline, enforceNoraises.} = o.o.isNil
 
-proc refEq(a, b: JSExternRef): bool {.importwasmexpr: "$0 == $1".}
-proc `==`*(a, b: JSExternRef): bool {.inline.} = refEq(a, b)
+proc refEq(a, b: JSObject): bool {.importwasmexpr: "$0 == $1".}
+proc `==`*(a, b: JSObject): bool {.inline.} = refEq(a, b)
 
-proc uint8MemSlice(s: pointer, length: uint32): JSRef {.importwasmexpr: "new Uint8Array(_nima, $0, $1)".}
+proc `==`*[T](e: Stored[T], n: typeof(nil)): bool {.inline, enforceNoRaises.} = isNil(e.o)
+proc `==`*[T](n: typeof(nil), e: Stored[T]): bool {.inline, enforceNoRaises.} = isNil(e.o)
 
-proc strToJs(m: JSRef): JSExternObj[JSString] {.importwasmf: "new TextDecoder().decode", enforceNoRaises.}
+proc uint8MemSlice(s: pointer, length: uint32): JSObject {.importwasmexpr: "new Uint8Array(_nima, $0, $1)".}
 
-proc strToJs*(s: pointer, length: uint32): JSExternObj[JSString] {.enforceNoRaises.} =
+proc strToJs(m: JSObject): JSString {.importwasmf: "new TextDecoder().decode", enforceNoRaises.}
+
+proc strToJs*(s: pointer, length: uint32): JSString {.enforceNoRaises.} =
   strToJs(uint8MemSlice(s, length))
 
-proc strLen(s: JSExternObj[JSString]): uint32 {.importwasmp: "length".}
-proc strWriteOut(s: JSExternObj[JSString], m: JSRef): uint32 {.importwasmexpr: """
+proc strLen(s: JSString): uint32 {.importwasmp: "length|0".}
+proc strWriteOut(s: JSString, m: JSObject): uint32 {.importwasmexpr: """
 new TextEncoder().encodeInto($0, $1).written
 """.}
 
-proc strToJs(s: openarray[char]): JSExternObj[JSString] {.inline, enforceNoRaises.} =
+proc strToJs(s: openarray[char]): JSString {.inline, enforceNoRaises.} =
   let sz = s.len
   strToJs(cast[pointer](addr s), sz.uint32)
 
-template toWasm*(a: string): JSExternObj[JSString] = strToJs(a)
-template toWasm*(a: cstring): JSExternObj[JSString] = strToJs(cast[pointer](a), a.len.uint32)
+template toWasm*(a: string): JSString = strToJs(a)
+template toWasm*(a: cstring): JSString = strToJs(cast[pointer](a), a.len.uint32)
 
-template isNil*(o: JSExternObj): bool = isNil(JSExternRef(o))
+converter toString*(j: JSString): string {.enforceNoRaises.} =
+  var sz = strLen(j)
+  if sz != 0:
+    sz *= 3
+    result.setLen(sz)
+    sz = strWriteOut(j, uint8MemSlice(addr result[0], sz))
+    result.setLen(sz)
 
-converter toString*(j: JSExternObj[JSString]): string =
-  if not JSExternRef(j).isNil:
-    var sz = strLen(j)
-    if sz != 0:
-      sz *= 3
-      result.setLen(sz)
-      sz = strWriteOut(j, uint8MemSlice(addr result[0], sz))
-      result.setLen(sz)
-
-proc `$`*(j: JSExternObj[JSString]): string {.inline.} = toString(j)
-
-converter toJSExternObj*(a: string): JSExternObj[JSString] {.enforceNoRaises.} = strToJs(a)
-converter toJSExternObj*(a: cstring): JSExternObj[JSString] {.enforceNoRaises.} = strToJs(cast[pointer](a), a.len.uint32)
-# converter toJSExternObj*[T, Y](a: JSExternObj[T]): JSExternObj[Y] {.enforceNoRaises.} = JSExternObj[Y](a)
-
-
-proc `==`*(e: JSExternObj, n: typeof(nil)): bool {.inline, enforceNoRaises.} = isNil(e)
-proc `==`*(n: typeof(nil), e: JSExternObj): bool {.inline, enforceNoRaises.} = isNil(e)
-
-
-converter toJSRef*(e: JSExternRef): JSRef =
-  createJSRef(e)
-
-converter toJSExternObj*[T: JSObj](o: T): JSExternObj[T] {.inline.} =
-  JSExternObj[T](toJSExternRef(o.o))
-
-converter toJSObj*[T: JSObj](e: JSExternObj[T]): T {.inline.} =
-  T(o: cast[JSRef](storeRef(JSExternRef(e))))
-
-converter toString*(j: JSString): string {.inline.} = toString(JSExternObj[JSString](j))
 proc `$`*(j: JSString): string {.inline.} = toString(j)
+
+converter toJSExternRef*(a: string): JSString {.enforceNoRaises.} = strToJs(a)
+converter toJSExternRef*(a: cstring): JSString {.enforceNoRaises.} = strToJs(cast[pointer](a), a.len.uint32)
+
+proc get*[T](s: Stored[T]): T {.inline.} = T(toJSExternRef(s.o))
+
+proc toString*(j: Stored[JSString]): string = toString(JSString(toJSExternRef(j.o)))
+proc `$`*(j: Stored[JSString]): string {.inline.} = toString(j)
 
 proc toFuncExternRef(p: pointer): JSExternFuncRef {.importwasmf: "_nime.__indirect_function_table.get".}
 
@@ -455,13 +470,16 @@ macro closurizeFunction(p: typed, funcPtr, env: typed): untyped =
   let prcId = ident("wasmrtClosurize" & $closurizeId)
   inc closurizeId
   let codeDecl = codegenDeclStr("\\02\\02" & decl)
-  let s = genSym(nskProc, "closurize")
   result = quote do:
-    proc `prcId`(p: JSExternFuncRef, e: pointer): JSExternRef {.importc, codegenDecl: `codeDecl`.}
+    proc `prcId`(p: JSExternFuncRef, e: pointer): JSObject {.importc, codegenDecl: `codeDecl`.}
     `prcId`(`funcPtr`, `env`)
 
-proc identity(p: JSExternFuncRef): JSExternRef {.importc, codegenDecl: codegenDeclStr("\\02\\01$$0").}
-proc toClosureFuncExternRef(p: proc{.closure.}): JSExternRef =
+template toWasm*(p: proc{.cdecl.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
+template toWasm*(p: proc{.nimcall.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
+
+proc identity(p: JSExternFuncRef): JSObject {.importwasmexpr: "$0".}
+
+proc toClosureFuncExternRef(p: proc{.closure.}): JSObject =
   # defineClosurizeFunction(p)
   let rp = rawProc(p)
   if rp == nil:
@@ -474,53 +492,12 @@ proc toClosureFuncExternRef(p: proc{.closure.}): JSExternRef =
     else:
       closurizeFunction(p, ep, e)
 
-template toWasm*(p: proc{.cdecl.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
-template toWasm*(p: proc{.nimcall.}): JSExternFuncRef = toFuncExternRef(cast[pointer](p))
-template toWasm*(p: proc{.closure.}): JSExternRef = toClosureFuncExternRef(p)
-template toWasm*(a: JSString): JSExternObj[JSString] = JSExternObj[JSString](toJSExternRef(a.o))
-
-proc retain*(r: JSRef) =
-  let idx = cast[StoredRefIdx](r)
-  assert(idx == 0 or refs[idx] != StoredRefIdx.high, "Maximum reference count reached for externref")
-  inc refs[idx]
-
-proc release*(r: JSRef) {.noinline.} =
-  let idx = cast[StoredRefIdx](r)
-  var cnt = refs[idx]
-  dec cnt
-  if cnt == 0:
-    refs[idx] = firstRef
-    firstRef = idx
-    wasmTableSet(globalRefs, cint(idx), nullExternRef())
-  else:
-    refs[idx] = cnt
-
-proc delete*(r: JSRef) =
-  release(r)
-
-proc `=copy`*(a: var JSObj, b: JSObj) =
-  retain(b.o)
-  release(a.o)
-  a.o = b.o
-
-proc `=destroy`*(a: var JSObj) =
-  release(a.o)
-  a.o = default(JSRef)
-
-converter toJSExternRef*(e: JSObj): JSExternRef {.inline.} = toJSExternRef(e.o)
+template toWasm*(p: proc{.closure.}): JSObject = toClosureFuncExternRef(p)
 
 when not defined(release):
   proc nimerr() {.exportwasm.} =
     writeStackTrace()
     raise newException(Exception, "")
-
-proc to*(o: sink JSObj, T: typedesc[JSObj]): T {.inline.} =
-  let r = o.o
-  wasMoved(o)
-  T(o: r)
-
-template to*[From](o: JSExternObj[From], T: typedesc[JSObj]): auto = JSExternObj[T](o)
-template to*(o: JSExternRef, T: typedesc[JSObj]): auto = JSExternObj[T](o)
 
 const initCode = (""";
 var W = WebAssembly, o = {}, g = globalThis, q='';
@@ -592,7 +569,7 @@ proc isNodejs(): bool {.enforceNoRaises.} =
   else:
     isNodejsAux()
 
-proc nodejsWriteToStream(s: int32, byteArray: JSRef) {.importwasmraw:"process[$0?'stderr':'stdout'].write($1)".}
+proc nodejsWriteToStream(s: int32, byteArray: JSObject) {.importwasmraw:"process[$0?'stderr':'stdout'].write($1)".}
 
 proc consoleAppend(s: JSString) {.importwasmraw: "_nimc += $0".}
 proc consoleFlush(s: int32) {.importwasmraw: "console[$0?'error':'log'](_nimc); _nimc = ''".}

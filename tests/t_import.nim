@@ -50,13 +50,13 @@ block:
   };
   """.}
   init()
-  proc myJSObject(): JSObj {.importwasmp.}
-  proc someProp(o: JSObj): JSString {.importwasmp.}
-  proc somePropButObj(o: JSObj): JSObj {.importwasmp: "someProp".}
-  proc `someProp=`(o: JSObj, s: JSString) {.importwasmp.}
-  proc someFunc(o: JSObj, a, b: int): int {.importwasmm.}
+  proc myJSObject(): JSObject {.importwasmp.}
+  proc someProp(o: JSObject): JSString {.importwasmp.}
+  proc somePropButObj(o: JSObject): JSObject {.importwasmp: "someProp".}
+  proc `someProp=`(o: JSObject, s: JSString) {.importwasmp.}
+  proc someFunc(o: JSObject, a, b: int): int {.importwasmm.}
   doAssert(myJSObject().someProp() == "hello")
-  doAssert(myJSObject().somePropButObj().to(JSString) == "hello")
+  doAssert(myJSObject().somePropButObj().JSString == "hello")
   doAssert(myJSObject().someFunc(1, 2) == 3)
   myJSObject().someProp = "hi"
   doAssert(myJSObject().someProp == "hi")
@@ -64,15 +64,15 @@ block:
   proc foo() =
     let j = myJSObject()
     doAssert(j.someProp == "hi")
-    let jo: JSObj = myJSObject()
+    let jo: Stored[JSObject] = myJSObject().store()
     doAssert(jo.someProp == "hi")
   foo()
 
 block:
-  proc getNull(): JSObj {.importwasmexpr: "null".}
+  proc getNull(): JSObject {.importwasmexpr: "null".}
   doAssert(getNull() == nil)
   doAssert(nil == getNull())
-  var j: JSObj = getNull()
+  var j: Stored[JSObject] = getNull().store()
   doAssert(j.isNil)
 
 
@@ -136,25 +136,25 @@ block: # Callback
   main()
 
 block: # Callback with string
-  proc setCallback(t: int, c: proc(a0: int, s: JSExternObj[JSString])) {.importwasmraw: """
+  proc setCallback(t: int, c: proc(a0: int, s: JSString)) {.importwasmraw: """
   $1(1, "hello world")
   """.}
 
-  proc setCallback(c: proc(s: JSExternRef)) {.importwasmraw: """
+  proc setCallback(c: proc(s: JSObject)) {.importwasmraw: """
   $0("hello world")
   """.}
 
   proc main() =
     var a = ""
-    var cb = proc(a0: int, s: JSExternObj[JSString]) =
+    var cb = proc(a0: int, s: JSString) =
       a = s
 
     setCallback(5, cb)
     doAssert(a == "hello world")
     a = ""
 
-    let anotherCb = proc(s: JSExternRef) =
-      a = s.to(JSString)
+    let anotherCb = proc(s: JSObject) =
+      a = s.JSString
 
     setCallback(anotherCb)
     doAssert(a == "hello world")
@@ -182,8 +182,8 @@ block: # Callback with nil env
 block:
   # Custom types
   type
-    HTMLElement = object of JSObj
-    Canvas = object of HTMLElement
+    HTMLElement {.externref.} = object of JSObject
+    Canvas {.externref.} = object of HTMLElement
   proc objType(e: HTMLElement): string {.importwasmp.}
   proc getSomeCanvas(): Canvas {.importwasmexpr: "{objType:'canvas'}".}
   proc getSomeElement(): HTMLElement {.importwasmexpr: "{objType:'element'}".}
@@ -197,37 +197,47 @@ block:
     doAssert(c.objType == "canvas")
     a.append(c)
     doAssert(a.appended.objType == "canvas")
-    let ao: HTMLElement = getSomeElement()
+    let ao: Stored[HTMLElement] = getSomeElement().store()
     doAssert(ao.objType == "element")
-    let co: Canvas = getSomeCanvas()
+    let co: Stored[Canvas] = getSomeCanvas().store()
     doAssert(co.objType == "canvas")
     ao.append(co)
     doAssert(ao.appended.objType == "canvas")
-    let ce: HTMLElement = getSomeCanvas().toJSObj()
+    let ce: Stored[HTMLElement] = getSomeCanvas().store()
     a.append(ce)
     doAssert(a.appended.objType == "canvas")
-    let ce1 = c.to(HTMLElement)
+    let ce1 = c.HTMLElement
     a.append(ce1)
     doAssert(a.appended.objType == "canvas")
   test()
 
 block:
   proc test() =
-    var v: JSExternObj[JSObj]
-    var s: JSExternObj[JSString]
+    var v: Stored[JSObject]
+    var s: Stored[JSString]
     v = s
+
+    var v1: JSObject
+    var s1: JSString
+    v1 = s1
   test()
 
 block:
   proc test() =
-    proc someObj(): JSObj {.importwasmexpr:"'hi'".}
-    let o = someObj().toJSObj()
-    let o1 = someObj().toJSObj()
-    var emptyObj: JSObj
+    proc someObj(): JSObject {.importwasmexpr:"'hi'".}
+    let o = someObj().store()
+    let o1 = someObj().store()
+    var emptyObj: Stored[JSObject]
     doAssert(o != emptyObj)
     doAssert(cast[int](o.o) != cast[int](o1.o))
     doAssert(o == o1)
   test()
 
+block:
+  proc test() =
+    proc someProc(a: JSObject): JSString {.importwasmexpr:"'hi ' + $0".}
+    proc foo(b: JSString): JSString = someProc(b)
+    doAssert(foo("foo") == "hi foo")
+  test()
 
 echo "ok"
