@@ -20,8 +20,16 @@ switch("passL", "--target=" & llTarget)
 
 switch("passC", "-flto") # Important for code size!
 
+const enableThreads = false
+when enableThreads:
+  switch("passC", "-pthread")
+
 # gc-sections seems to not have any effect
-var linkerOptions = "-nostdlib -Wl,--no-entry,--allow-undefined,--gc-sections,--strip-all"
+var linkerOptions = "-nostdlib -Wl,--no-entry,--allow-undefined"#,--gc-sections,--strip-all"
+
+when enableThreads:
+  linkerOptions &= ",--shared-memory"
+  linkerOptions &= ",--max-memory=4294967296"
 
 switch("clang.options.linker", linkerOptions)
 switch("clang.cpp.options.linker", linkerOptions)
