@@ -20,7 +20,7 @@ node tests/runwasm.js test.wasm
 # Run your wasm
 The wasm file generated this way is pretty standalone, and requires only the following JavaScript code to bootstrap:
 ```js
-function runNimWasm(w){for(i of WebAssembly.Module.exports(w)){n=i.name;if(n[0]==';'){new Function('m',n)(w);break}}}
+function runNimWasm(w){for(i of WebAssembly.Module.exports(w))n=i.name,n[0]==';'&&new Function('m',n)(w)}
 ```
 `runNimWasm` takes the output of `WebAssembly.compile` function. E.g. to run a wasm file in nodejs, use smth like [runwasm.js](https://github.com/yglukhov/wasmrt/blob/master/tests/runwasm.js)
 

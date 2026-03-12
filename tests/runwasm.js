@@ -5,6 +5,6 @@ process.on('unhandledRejection', error => {
 
 globalThis.require = require; // This is only required for threads support in node.
 
-function runNimWasm(w){for(i of WebAssembly.Module.exports(w)){n=i.name;if(n[0]==';'){new Function('m',n)(w);break}}}
+function runNimWasm(w){for(i of WebAssembly.Module.exports(w))n=i.name,n[0]==';'&&new Function('m',n)(w)}
 
 WebAssembly.compile(require("fs").readFileSync(process.argv[2])).then(runNimWasm)
