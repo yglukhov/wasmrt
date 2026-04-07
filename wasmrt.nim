@@ -169,7 +169,8 @@ proc retTypeSig(t: typedesc, prop, meth: bool, numArgs: int): int =
 
 template toWasm*[T: JSObject](a: T): T = a
 template toWasm*[T: JSObject](a: Stored[T]): T = T(toJSExternRef(a.o))
-template toWasm*(a: int|uint|int32|uint32|uint64|float32|float64|cfloat|cdouble|bool|pointer|ptr|enum|set): auto = a
+template toWasm*(a: int|uint|int32|uint32|float32|float64|cfloat|cdouble|bool|pointer|ptr|enum|set): auto = a
+template toWasm*(a: int64|uint64): auto = cdouble(a)
 template toWasm*(a: JSExternFuncRef): JSExternFuncRef = a
 
 template toWasmType(t: typedesc): typedesc =
@@ -221,6 +222,12 @@ proc genWasmId(body, typSig: string, funSig, numArgs: int): int =
       result = idTab.len
       doAssert(wasmId <= 16, "Too many wasm function overloads")
       idTab[typSig] = result
+
+template fromWasm(retType: typedesc, v: untyped): untyped =
+  when retType is int64|uint64:
+    retType(v)
+  else:
+    v
 
 proc codegenDeclStr(rawBody: string): string =
   # returns value for codegendecl pragma of an imported function with raw body `s` (including arg sig)
@@ -276,7 +283,7 @@ macro importwasmAux2(body, typSig: static[string], p: untyped, funSig, numArgs: 
   p.addPragma(newColonExpr(ident"codegenDecl", newLit(codegenDeclStr(argSig & body))))
 
   wrapper.body = quote do:
-    `call`
+    fromWasm(`retType`, `call`)
 
   result = quote do:
     `p`

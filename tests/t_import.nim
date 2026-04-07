@@ -27,6 +27,7 @@ block:
 block:
   proc init() {.importwasmraw: """
   globalThis.myJSFunction = (a, b) => a + b;
+  globalThis.myJSFunction64 = (a) => typeof a;
   """.}
   init()
   proc myJSFunction(a, b: int): int {.importwasmf.}
@@ -37,6 +38,10 @@ block:
   doAssert(myJSFunction("2", "3") == "23")
   proc myJSFunction(a, b: JSString): string {.importwasmf, used.}
   doAssert(myJSFunction("1", "2") == "12")
+  proc myJSFunction(a, b: uint64): uint64 {.importwasmf, used.}
+  doAssert(myJSFunction(1, 2) == 3)
+  proc myJSFunction64(a: uint64): string {.importwasmf.}
+  doAssert(myJSFunction64(1) == "number")
 block:
   proc myJSFunction(a, b: JSString): JSString {.importwasmf.}
   doAssert(myJSFunction("5", "6") == "56")
